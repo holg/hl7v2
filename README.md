@@ -1,10 +1,10 @@
-# hl7v2
+# hl7kit
 
 A small, dependency-free HL7 v2.x parser for Rust that keeps the **byte span of
 every field, repetition, component and subcomponent**, so you can point back
 into the original message without searching for the value again.
 
-The crate lives in [`crates/hl7v2`](crates/hl7v2). The browser DICOM viewer in
+The crate lives in [`crates/hl7kit`](crates/hl7kit). The browser DICOM viewer in
 [`demo/dicomscope`](demo/dicomscope) is its demo: it uses the spans to
 highlight the four order identifiers in place and links them to a DICOM study.
 
@@ -33,8 +33,8 @@ parser is built for that:
 ## Usage
 
 ```rust
-use hl7v2::Message;
-use hl7v2::order::Order;
+use hl7kit::Message;
+use hl7kit::order::Order;
 
 let msg = Message::parse(text)?;
 assert_eq!(msg.get("MSH-9.1"), Some("ORM"));
@@ -64,7 +64,7 @@ all indices one-based. `PID.3.1` is accepted as an alias for `PID-3.1`.
 
 | Path | What |
 | --- | --- |
-| `crates/hl7v2` | The library. `cargo test -p hl7v2` |
+| `crates/hl7kit` | The library. `cargo test -p hl7kit` |
 | `demo/dicomscope` | Browser demo: Leptos + wgpu + dicom-rs, no JavaScript. See its [README](demo/dicomscope/README.md) |
 | `samples/` | Fixture HL7 messages used by the tests and the demo |
 | `docs/hl7v2.md` | The design document the demo was built from |
@@ -81,7 +81,7 @@ supported Rust version for the library is 1.85.
 ## Building messages
 
 ```rust
-use hl7v2::builder::{Builder, Value};
+use hl7kit::builder::{Builder, Value};
 
 let mut b = Builder::new();
 b.segment("MSH").set(3, "RIS").set(9, Value::components(["ORM", "O01"])).set(10, "1");
@@ -100,7 +100,7 @@ which is how the sample messages in `samples/` are produced.
 ## Releasing
 
 The library is published to crates.io by `.github/workflows/publish.yml`
-when a `v*` tag is pushed whose version equals `crates/hl7v2/Cargo.toml`:
+when a `v*` tag is pushed whose version equals `crates/hl7kit/Cargo.toml`:
 
 ```sh
 git tag v0.1.0 && git push origin v0.1.0

@@ -10,12 +10,12 @@
   with `MR_small.dcm` shows the headline case: linked study, patient mismatch.
 
 Both use the standard `\r` segment terminator. The library's tests use a
-copy of `order.hl7` at `crates/hl7v2/tests/fixtures/order.hl7`, so the
+copy of `order.hl7` at `crates/hl7kit/tests/fixtures/order.hl7`, so the
 published crate carries its own fixture; a demo test fails if the two files
 ever differ.
 
 - `anonymized-demo.hl7` — generated from `anonymized-demo.zip` (an anonymised
-  five-series CT study, 970 files, not committed) with the `hl7v2` builder:
+  five-series CT study, 970 files, not committed) with the `hl7kit` builder:
 
   ```sh
   cargo run -p dicomscope -- order samples/anonymized-demo.zip --control-id MSG0003 -o samples/anonymized-demo.hl7

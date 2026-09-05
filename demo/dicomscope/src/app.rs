@@ -17,8 +17,8 @@ use crate::ui::document_view::DocumentContent;
 use crate::ui::file_drop::FilesResult;
 use crate::ui::viewer::{sync_backing_size, Tool, ViewControls, Viewport};
 use crate::ui::{DocumentView, FileDrop, Hl7View, LinkPanel, SeriesPanel, TagTree, WindowControls};
-use hl7v2::order::{Order, OrderField};
-use hl7v2::{Message, Span};
+use hl7kit::order::{Order, OrderField};
+use hl7kit::{Message, Span};
 use leptos::html;
 use leptos::prelude::*;
 use leptos::task::spawn_local;
@@ -427,7 +427,7 @@ pub fn App() -> impl IntoView {
         // Latin-1 order messages are common; keep going and say so.
         let msg = match Message::parse_bytes(&bytes) {
             Ok(m) => m,
-            Err(hl7v2::ParseError::InvalidUtf8 { .. }) => match Message::parse_lossy(&bytes) {
+            Err(hl7kit::ParseError::InvalidUtf8 { .. }) => match Message::parse_lossy(&bytes) {
                 Ok(m) => m,
                 Err(e) => return error.set(Some(AppError::from(e).to_string())),
             },
@@ -655,7 +655,7 @@ pub fn App() -> impl IntoView {
             <h1>"dicomscope"</h1>
             <p class="sub">
                 "Browser-only DICOM viewer with HL7 v2 order linkage. Demo for the "
-                <code>"hl7v2"</code> " crate. Nothing leaves this page: no network requests after load."
+                <code>"hl7kit"</code> " crate. Nothing leaves this page: no network requests after load."
             </p>
 
             {move || error.get().map(|e| view! { <p class="banner danger">{e}</p> })}

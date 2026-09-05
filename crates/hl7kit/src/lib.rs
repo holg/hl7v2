@@ -20,7 +20,7 @@
 //!   `wasm32-unknown-unknown` unchanged.
 //!
 //! ```
-//! use hl7v2::Message;
+//! use hl7kit::Message;
 //!
 //! let text = "MSH|^~\\&|RIS|HOSP|PACS|HOSP|20260905120000||ORM^O01|42|P|2.5.1\r\
 //!             PID|1||4MR1^^^HOSP^MR||Doe^Jane||19700101|F\r\

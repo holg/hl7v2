@@ -14,7 +14,7 @@
 //! invented downstream.
 
 use crate::dicom::Study;
-use hl7v2::order::Order;
+use hl7kit::order::Order;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LinkPath {

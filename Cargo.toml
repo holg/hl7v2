@@ -1,7 +1,7 @@
 [workspace]
 resolver = "2"
-members = ["crates/hl7v2", "demo/dicomscope"]
-default-members = ["crates/hl7v2"]
+members = ["crates/hl7kit", "demo/dicomscope"]
+default-members = ["crates/hl7kit"]
 
 [workspace.package]
 edition = "2021"

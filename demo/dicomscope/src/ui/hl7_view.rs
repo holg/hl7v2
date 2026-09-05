@@ -1,8 +1,8 @@
 //! Raw message with the four order fields highlighted in place, using the
-//! byte spans the `hl7v2` crate returns, so nothing is re-searched.
+//! byte spans the `hl7kit` crate returns, so nothing is re-searched.
 
-use hl7v2::order::OrderField;
-use hl7v2::Span;
+use hl7kit::order::OrderField;
+use hl7kit::Span;
 use leptos::prelude::*;
 
 /// Text split into plain and highlighted chunks. Pure, so it can be tested on

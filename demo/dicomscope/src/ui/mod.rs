@@ -1,5 +1,5 @@
 //! Leptos components. Browser only; nothing here is unit-tested, the logic
-//! they display lives in `dicom`, `link` and the `hl7v2` crate.
+//! they display lives in `dicom`, `link` and the `hl7kit` crate.
 
 pub mod controls;
 pub mod document_view;

@@ -4,7 +4,7 @@ A browser-only DICOM viewer with HL7 v2 order linkage. Pure Rust: Leptos CSR,
 wgpu, dicom-rs, compiled to `wasm32-unknown-unknown` and served by Trunk. No
 hand-written JavaScript, no npm.
 
-This is the demo application for the [`hl7v2`](../../crates/hl7v2) crate. The
+This is the demo application for the [`hl7kit`](../../crates/hl7kit) crate. The
 viewer is scaffolding; the point is the linkage panel and the highlighted HL7
 message underneath it, both driven by the byte spans the crate returns.
 
@@ -143,7 +143,7 @@ keeps every K-th slice, which is how a 500 MB export becomes a demo-sized
 study without touching any pixel. Pixel data is copied unchanged.
 
 The `order` subcommand reads one instance header (streamed out of a zip, so archive size does not
-matter), builds an ORM^O01 with the `hl7v2` builder from Patient ID, name,
+matter), builds an ORM^O01 with the `hl7kit` builder from Patient ID, name,
 sex, birth date, study date and time, description, modality, Accession
 Number, Requested Procedure ID and Study Instance UID, then parses the message
 back, extracts the order fields and resolves the linkage. It refuses to write

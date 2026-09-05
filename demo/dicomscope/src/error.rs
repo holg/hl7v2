@@ -20,7 +20,7 @@ pub enum AppError {
     /// Pixel decoding failed for a supported transfer syntax.
     Decode(String),
     /// The HL7 message could not be parsed.
-    Hl7(hl7v2::ParseError),
+    Hl7(hl7kit::ParseError),
     /// No WebGPU adapter was available.
     NoWebGpu(String),
     /// Any other GPU failure.
@@ -58,8 +58,8 @@ impl fmt::Display for AppError {
 
 impl std::error::Error for AppError {}
 
-impl From<hl7v2::ParseError> for AppError {
-    fn from(e: hl7v2::ParseError) -> Self {
+impl From<hl7kit::ParseError> for AppError {
+    fn from(e: hl7kit::ParseError) -> Self {
         AppError::Hl7(e)
     }
 }

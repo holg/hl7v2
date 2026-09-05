@@ -7,8 +7,8 @@
 //! [`Message::parse`](crate::Message) to the same values.
 //!
 //! ```
-//! use hl7v2::builder::{Builder, Value};
-//! use hl7v2::Message;
+//! use hl7kit::builder::{Builder, Value};
+//! use hl7kit::Message;
 //!
 //! let mut b = Builder::new();
 //! b.segment("MSH")

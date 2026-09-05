@@ -1,5 +1,5 @@
-use hl7v2::order::{Order, OrderField};
-use hl7v2::{Encoding, Message, ParseError, Path, Warning};
+use hl7kit::order::{Order, OrderField};
+use hl7kit::{Encoding, Message, ParseError, Path, Warning};
 
 const SAMPLE: &str = include_str!("fixtures/order.hl7");
 

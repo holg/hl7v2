@@ -5,7 +5,7 @@ TypeScript, no npm.** Leptos CSR + wgpu + dicom-rs, compiled to
 `wasm32-unknown-unknown`, served by Trunk.
 
 > **Revision 2026-09-05.** The viewer is the *demo*; the deliverable is the
-> `hl7v2` library crate in `crates/hl7v2`, which this page exercises. The
+> `hl7kit` library crate in `crates/hl7kit`, which this page exercises. The
 > workspace layout in section 2, the HL7 module in section 5 and several
 > technical details were corrected while building it:
 >
@@ -121,7 +121,7 @@ are declared under `[target.'cfg(target_arch = "wasm32")']` so host `cargo
 test` never compiles them.
 
 ```
-hl7v2/
+hl7kit/
   Cargo.toml            workspace; release profile
   README.md             library-first overview
   docs/hl7v2.md         this document
@@ -129,7 +129,7 @@ hl7v2/
     README.md           where to get test files
     order.hl7           synthetic ORM^O01 matching pydicom MR_small.dcm
     order-mismatch.hl7  same study UID, different patient
-  crates/hl7v2/         the library (no dependencies)
+  crates/hl7kit/         the library (no dependencies)
     src/
       lib.rs
       encoding.rs       MSH-1/MSH-2 delimiters
@@ -195,7 +195,7 @@ pub struct Frame {
     // plus bits_stored, photometric, rescale for the overlay
 }
 
-// From the hl7v2 crate (hl7v2::order):
+// From the hl7kit crate (hl7kit::order):
 pub struct Order {
     pub patient_id:   Option<String>,  // PID-3.1
     pub accession:    Option<String>,  // OBR-18
@@ -264,8 +264,8 @@ skipped.
 
 ## 5. HL7 module
 
-This is the `hl7v2` crate. The demo does not parse HL7 itself; it calls
-`hl7v2::Message::parse` and `hl7v2::order::Order::extract`. The requirements
+This is the `hl7kit` crate. The demo does not parse HL7 itself; it calls
+`hl7kit::Message::parse` and `hl7kit::order::Order::extract`. The requirements
 below are what the crate implements and tests.
 
 ### Parser
@@ -291,7 +291,7 @@ Unknown sequences are kept verbatim.
 Return byte spans alongside values so the raw-message view can highlight in place
 without re-searching the text.
 
-### Order fields (`hl7v2::order`)
+### Order fields (`hl7kit::order`)
 
 | Field | Location | Notes |
 | --- | --- | --- |

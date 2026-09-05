@@ -34,7 +34,7 @@ jobs:
       - name: No network APIs in the demo
         run: |
           set -e
-          if grep -rnE 'fetch\(|XMLHttpRequest|WebSocket|EventSource' demo/dicomscope/src crates/hl7v2/src; then
+          if grep -rnE 'fetch\(|XMLHttpRequest|WebSocket|EventSource' demo/dicomscope/src crates/hl7kit/src; then
             echo "network API reference found"; exit 1
           fi
           if grep -nE '"(Request|Response|Fetch|WebSocket|XmlHttpRequest|Headers)"' demo/dicomscope/Cargo.toml; then

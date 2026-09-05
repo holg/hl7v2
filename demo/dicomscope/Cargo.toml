@@ -1,7 +1,7 @@
 [package]
 name = "dicomscope"
 version = "0.1.0"
-description = "Demo for the hl7v2 crate: a browser-only DICOM viewer that links a study to its HL7 v2 order"
+description = "Demo for the hl7kit crate: a browser-only DICOM viewer that links a study to its HL7 v2 order"
 publish = false
 edition.workspace = true
 license.workspace = true
@@ -12,7 +12,7 @@ rust-version.workspace = true
 # compiles only these, so the DICOM and linkage modules stay testable without
 # a browser.
 [dependencies]
-hl7v2 = { path = "../../crates/hl7v2" }
+hl7kit = { path = "../../crates/hl7kit" }
 dicom-core = "0.10.0"
 dicom-dictionary-std = "0.10.0"
 dicom-object = "0.10.0"

@@ -1,4 +1,4 @@
-//! Generate an HL7 ORM^O01 that matches a DICOM study, using the `hl7v2`
+//! Generate an HL7 ORM^O01 that matches a DICOM study, using the `hl7kit`
 //! builder. The output is what a RIS would have sent for the study, so
 //! loading it next to the images exercises the linkage with a real study.
 //!
@@ -6,7 +6,7 @@
 //! it is tested on the host like the rest of the domain code.
 
 use crate::dicom::Study;
-use hl7v2::builder::{Builder, Value};
+use hl7kit::builder::{Builder, Value};
 
 /// Everything the message needs beyond [`Study`]. All optional; blanks stay
 /// blank so the message is honest about what the study carries.
@@ -129,8 +129,8 @@ pub fn order_message(study: &Study, details: &OrderDetails) -> String {
 mod tests {
     use super::*;
     use crate::link::{self, LinkPath};
-    use hl7v2::order::Order;
-    use hl7v2::Message;
+    use hl7kit::order::Order;
+    use hl7kit::Message;
 
     fn study() -> Study {
         Study {
@@ -184,10 +184,10 @@ mod tests {
         let root = concat!(env!("CARGO_MANIFEST_DIR"), "/../..");
         let sample = std::fs::read(format!("{root}/samples/order.hl7")).unwrap();
         let fixture =
-            std::fs::read(format!("{root}/crates/hl7v2/tests/fixtures/order.hl7")).unwrap();
+            std::fs::read(format!("{root}/crates/hl7kit/tests/fixtures/order.hl7")).unwrap();
         assert_eq!(
             sample, fixture,
-            "samples/order.hl7 differs from crates/hl7v2/tests/fixtures/order.hl7"
+            "samples/order.hl7 differs from crates/hl7kit/tests/fixtures/order.hl7"
         );
     }
 

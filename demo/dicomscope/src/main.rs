@@ -1,5 +1,5 @@
 //! dicomscope: a browser-only DICOM viewer that links a study to its HL7 v2
-//! order. This is the demo application for the `hl7v2` crate.
+//! order. This is the demo application for the `hl7kit` crate.
 //!
 //! No hand-written JavaScript, no network I/O after page load, no `unwrap()`
 //! on user data. See the README for the guarantees and how to verify them.
@@ -39,7 +39,7 @@ fn main() {
 ///   loads, scans into series and decodes, and prints what it found;
 /// * `dicomscope order <folder | study.zip | file.dcm> [options]` writes an
 ///   HL7 ORM^O01 that matches the study, then parses it back with the
-///   `hl7v2` crate and reports the linkage. That is how the sample orders in
+///   `hl7kit` crate and reports the linkage. That is how the sample orders in
 ///   `samples/` are produced, and it is a round trip through both crates.
 #[cfg(not(target_arch = "wasm32"))]
 fn main() {
@@ -224,7 +224,7 @@ fn check(path: &str) -> Result<String, String> {
 ///
 /// Reads one instance header from the study (streaming the first `.dcm`
 /// entry out of a zip, so a 500 MB archive is not loaded), builds the order
-/// with the `hl7v2` builder, parses it back, extracts the order fields and
+/// with the `hl7kit` builder, parses it back, extracts the order fields and
 /// resolves the linkage against the study. The message goes to `-o` or
 /// stdout; the verification goes to stderr.
 #[cfg(not(target_arch = "wasm32"))]
@@ -293,7 +293,7 @@ fn order_command(args: &[String]) -> Result<(), String> {
     let text = order_gen::order_message(&study, &details);
 
     // Round trip: what we wrote must parse, and the link must resolve.
-    let msg = hl7v2::Message::parse(&text)
+    let msg = hl7kit::Message::parse(&text)
         .map_err(|e| format!("generated message does not parse: {e}"))?;
     if !msg.warnings().is_empty() {
         return Err(format!(
@@ -301,7 +301,7 @@ fn order_command(args: &[String]) -> Result<(), String> {
             msg.warnings()
         ));
     }
-    let order = hl7v2::order::Order::extract(&msg);
+    let order = hl7kit::order::Order::extract(&msg);
     let linkage = link::resolve(&study, &order);
     eprintln!(
         "read {name}: patient {:?}, accession {:?}, procedure {:?}, study {:?}",
