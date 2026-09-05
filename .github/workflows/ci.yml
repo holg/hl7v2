@@ -1,0 +1,61 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+  TRUNK_VERSION: 0.21.14
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Format
+        run: cargo fmt --all -- --check
+
+      - name: Clippy (host)
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Clippy (wasm32)
+        run: cargo clippy -p dicomscope --target wasm32-unknown-unknown -- -D warnings
+
+      - name: Test (host)
+        run: cargo test --workspace
+
+      - name: No network APIs in the demo
+        run: |
+          set -e
+          if grep -rnE 'fetch\(|XMLHttpRequest|WebSocket|EventSource' demo/dicomscope/src crates/hl7v2/src; then
+            echo "network API reference found"; exit 1
+          fi
+          if grep -nE '"(Request|Response|Fetch|WebSocket|XmlHttpRequest|Headers)"' demo/dicomscope/Cargo.toml; then
+            echo "web-sys network feature enabled"; exit 1
+          fi
+          if grep -nE '<script|<link[^>]+href="https?:' demo/dicomscope/index.html; then
+            echo "external resource in index.html"; exit 1
+          fi
+
+      - name: Install trunk
+        uses: taiki-e/install-action@v2
+        with:
+          tool: trunk@${{ env.TRUNK_VERSION }}
+
+      - name: Build demo
+        working-directory: demo/dicomscope
+        run: trunk build --release
+
+      - name: Report bundle size
+        working-directory: demo/dicomscope
+        run: |
+          for f in dist/*.wasm dist/*.js; do
+            printf '%s raw %s gzip %s\n' "$f" "$(stat -c %s "$f")" "$(gzip -9c "$f" | wc -c)"
+          done

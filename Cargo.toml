@@ -1,0 +1,23 @@
+[workspace]
+resolver = "2"
+members = ["crates/hl7v2", "demo/dicomscope"]
+default-members = ["crates/hl7v2"]
+
+[workspace.package]
+edition = "2021"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/holg/hl7v2"
+rust-version = "1.85"
+
+# Dev builds (what `trunk serve` ships) keep our own code unoptimised and
+# debuggable, but compile dependencies optimised: inflating a zip and parsing
+# DICOM through unoptimised miniz_oxide and dicom-rs was measured 6x slower.
+[profile.dev.package."*"]
+opt-level = 3
+
+[profile.release]
+opt-level = "z"
+lto = true
+strip = true
+codegen-units = 1
+panic = "abort"

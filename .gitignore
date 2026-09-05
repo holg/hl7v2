@@ -1,0 +1,8 @@
+/target
+/demo/dicomscope/dist
+/trunk-build.log
+/samples/dicom/
+/samples/study-demo.zip
+/samples/anonymized-demo.zip
+/samples/anonymized-demo*.zip
+/samples/anonymized-demo/

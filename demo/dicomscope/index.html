@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>dicomscope</title>
+    <link data-trunk rel="rust" data-wasm-opt="z" data-wasm-opt-params="--enable-bulk-memory --enable-nontrapping-float-to-int --enable-sign-ext --enable-mutable-globals --enable-reference-types --enable-multivalue" />
+    <style>
+      :root { color-scheme: light dark; --danger: #b3261e; --danger-bg: #fde7e5; --ok: #1b6e3a; --ok-bg: #e4f4ea; --muted: #666; --border: #ccc; }
+      @media (prefers-color-scheme: dark) { :root { --danger-bg: #4a1f1c; --ok-bg: #1e3a29; --muted: #aaa; --border: #444; } }
+      body { margin: 0; font: 14px/1.45 system-ui, sans-serif; }
+      main { max-width: 1400px; margin: 0 auto; padding: 1rem; }
+      h1 { font-size: 1.25rem; margin: 0 0 .25rem; }
+      h2 { font-size: 1rem; margin: 1rem 0 .5rem; }
+      .sub { color: var(--muted); margin: 0 0 1rem; }
+      .banner { padding: .6rem .8rem; border-radius: 4px; margin: .5rem 0; }
+      .banner.danger { background: var(--danger-bg); border: 1px solid var(--danger); }
+      .banner.ok { background: var(--ok-bg); border: 1px solid var(--ok); }
+      .banner.info { border: 1px solid var(--border); }
+      .cols { display: grid; grid-template-columns: 1fr; gap: 1rem; }
+      @media (min-width: 900px) { .cols { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); } }
+      .loadbar { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+      .drop { display: block; border: 2px dashed var(--border); border-radius: 6px; padding: 1rem; text-align: center; cursor: pointer; }
+      .drop.loaded { border-style: solid; }
+      .drop input { display: block; margin: .5rem auto 0; }
+      .series-list { display: flex; flex-wrap: wrap; gap: .4rem; margin: .3rem 0; }
+      .series-list button.active { outline: 2px solid #6aa8ff; }
+      .slider { display: grid; grid-template-columns: 4rem 1fr 6rem; gap: .5rem; align-items: center; margin: .3rem 0; }
+      .slider input { width: 100%; }
+      .series details { margin: .3rem 0; } .series ul { margin: .2rem 0; padding-left: 1.2rem; font-size: 12px; }
+      .drop .name { font-family: monospace; }
+      .viewer { position: relative; background: #000; height: 60vh; min-height: 280px; outline: none; border-radius: 4px; overflow: hidden; }
+      .viewer:focus-within, .viewer:focus { box-shadow: 0 0 0 2px #6aa8ff inset; }
+      .viewer canvas { display: block; width: 100%; height: 100%; cursor: grab; touch-action: none; }
+      .viewer canvas:active { cursor: grabbing; }
+      .overlay { position: absolute; left: .5rem; top: .5rem; color: #fff; font-family: monospace; font-size: 12px; text-shadow: 0 0 3px #000; pointer-events: none; }
+      .placeholder { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: #ccc; padding: 2rem; text-align: center; pointer-events: none; }
+      .viewer svg.marks { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+      .viewer svg.marks line { stroke: #ffd400; stroke-width: 1.5; }
+      .viewer svg.marks line.draft { stroke-dasharray: 4 3; }
+      .viewer svg.marks circle { fill: #ffd400; }
+      .viewer svg.marks text { fill: #ffd400; font: 12px system-ui, sans-serif; paint-order: stroke; stroke: #000; stroke-width: 3px; }
+      .viewer canvas.tool { cursor: crosshair; }
+      .viewbar { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; margin-top: .4rem; }
+      .viewbar button.active { outline: 2px solid #6aa8ff; }
+      .series-list button { display: inline-flex; align-items: center; gap: .4rem; padding: .2rem .5rem; }
+      .series-list canvas { width: 48px; height: 48px; image-rendering: pixelated; background: #000; border-radius: 3px; object-fit: contain; }
+      .documents { display: flex; flex-wrap: wrap; gap: .4rem; margin: .3rem 0; }
+      .documents button.active { outline: 2px solid #6aa8ff; }
+      .doc pre { white-space: pre-wrap; border: 1px solid var(--border); border-radius: 4px; padding: .5rem; max-height: 24rem; overflow: auto; font-size: 12px; }
+      .doc iframe { width: 100%; height: 32rem; border: 1px solid var(--border); border-radius: 4px; background: #fff; }
+      .viewbar .hint { margin-left: auto; }
+      .controls label { display: grid; grid-template-columns: 5rem 1fr 5rem; gap: .5rem; align-items: center; margin: .25rem 0; }
+      .controls input[type=range] { width: 100%; }
+      .presets button { margin-right: .5rem; }
+      table { border-collapse: collapse; width: 100%; }
+      th, td { text-align: left; padding: .2rem .4rem; border-bottom: 1px solid var(--border); vertical-align: top; font-family: monospace; font-size: 12px; word-break: break-all; }
+      th { font-family: system-ui, sans-serif; }
+      td.k { color: var(--muted); }
+      .match { color: var(--ok); font-weight: 600; }
+      .mismatch { color: var(--danger); font-weight: 600; }
+      pre.hl7 { white-space: pre-wrap; word-break: break-all; border: 1px solid var(--border); padding: .5rem; border-radius: 4px; font-size: 12px; max-height: 20rem; overflow: auto; }
+      mark { padding: 0 .15em; border-radius: 2px; }
+      mark.patient { background: #ffe08a; color: #000; }
+      mark.accession { background: #9ed6ff; color: #000; }
+      mark.procedure { background: #c9f2b8; color: #000; }
+      mark.study { background: #f2b8f0; color: #000; }
+      .legend mark { margin-right: .5rem; }
+      .tags { max-height: 30rem; overflow: auto; border: 1px solid var(--border); border-radius: 4px; }
+      .tags input { width: 100%; box-sizing: border-box; padding: .3rem; margin-bottom: .5rem; }
+      .depth1 td:first-child { padding-left: 1.4rem; } .depth2 td:first-child { padding-left: 2.4rem; } .depth3 td:first-child { padding-left: 3.4rem; }
+      small { color: var(--muted); }
+      footer { margin-top: 2rem; color: var(--muted); font-size: 12px; }
+    </style>
+  </head>
+  <body></body>
+</html>

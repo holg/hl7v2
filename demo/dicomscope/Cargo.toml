@@ -1,0 +1,56 @@
+[package]
+name = "dicomscope"
+version = "0.1.0"
+description = "Demo for the hl7v2 crate: a browser-only DICOM viewer that links a study to its HL7 v2 order"
+publish = false
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+# Host-buildable domain dependencies. `cargo test -p dicomscope` on the host
+# compiles only these, so the DICOM and linkage modules stay testable without
+# a browser.
+[dependencies]
+hl7v2 = { path = "../../crates/hl7v2" }
+dicom-core = "0.10.0"
+dicom-dictionary-std = "0.10.0"
+dicom-object = "0.10.0"
+dicom-encoding = "0.10.0"
+dicom-transfer-syntax-registry = "0.10.0"
+dicom-pixeldata = { version = "0.10.0", default-features = false, features = ["jpeg", "native", "rle", "deflate"] }
+bytemuck = { version = "1.25.2", features = ["derive"] }
+zip = { version = "7.2.0", default-features = false, features = ["deflate"] }
+
+[dev-dependencies]
+naga = { version = "30.0.1", features = ["wgsl-in"] }
+
+# Browser-only dependencies. Nothing here is compiled for the host target.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+leptos = { version = "0.8.20", features = ["csr"] }
+wgpu = { version = "30.0.1", default-features = false, features = ["std", "webgpu", "wgsl"] }
+wasm-bindgen = "0.2.128"
+wasm-bindgen-futures = "0.4.78"
+js-sys = "0.3.105"
+console_error_panic_hook = "0.1.7"
+web-sys = { version = "0.3.105", features = [
+  "Blob",
+  "BlobPropertyBag",
+  "CanvasRenderingContext2d",
+  "ImageData",
+  "Url",
+  "DataTransfer",
+  "DomRect",
+  "DragEvent",
+  "Element",
+  "Event",
+  "File",
+  "FileList",
+  "HtmlCanvasElement",
+  "HtmlElement",
+  "HtmlInputElement",
+  "KeyboardEvent",
+  "MouseEvent",
+  "WheelEvent",
+  "Window",
+] }
