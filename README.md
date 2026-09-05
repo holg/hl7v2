@@ -4,9 +4,15 @@ A small, dependency-free HL7 v2.x parser for Rust that keeps the **byte span of
 every field, repetition, component and subcomponent**, so you can point back
 into the original message without searching for the value again.
 
-The crate lives in [`crates/hl7kit`](crates/hl7kit). The browser DICOM viewer in
+The crate lives in [`crates/hl7kit`](crates/hl7kit) and on
+[crates.io](https://crates.io/crates/hl7kit). The browser DICOM viewer in
 [`demo/dicomscope`](demo/dicomscope) is its demo: it uses the spans to
 highlight the four order identifiers in place and links them to a DICOM study.
+
+**Live demo:** <https://holg.github.io/hl7v2/>, built from `main` by
+`.github/workflows/pages.yml`. It runs entirely in your browser: files you
+open never leave the tab, and the page makes no network requests after it
+loads. Needs WebGPU (Chrome, Edge, Safari 26; Firefox with it enabled).
 
 ## Why another HL7 parser
 

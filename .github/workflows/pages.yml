@@ -1,0 +1,64 @@
+name: pages
+
+# Builds the dicomscope demo with Trunk and publishes it to GitHub Pages at
+# https://holg.github.io/hl7v2/ on every push to main. The page is static:
+# it loads its own HTML, JS loader and wasm, and nothing else, so hosting it
+# on Pages does not weaken the no-network guarantee.
+#
+# One-time setup: repository Settings > Pages > Source: "GitHub Actions".
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+env:
+  TRUNK_VERSION: 0.21.14
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: trunk@${{ env.TRUNK_VERSION }}
+
+      - name: Build demo
+        working-directory: demo/dicomscope
+        # The site lives under /<repo>/ on Pages; Trunk rewrites asset URLs.
+        run: trunk build --release --public-url "/${{ github.event.repository.name }}/"
+
+      - name: Report bundle size
+        working-directory: demo/dicomscope
+        run: |
+          for f in dist/*.wasm dist/*.js; do
+            printf '%s raw %s gzip %s\n' "$f" "$(stat -c %s "$f")" "$(gzip -9c "$f" | wc -c)"
+          done
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: demo/dicomscope/dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
