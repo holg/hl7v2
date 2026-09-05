@@ -1,0 +1,70 @@
+name: publish
+
+# Publishes the `hl7v2` library to crates.io when a version tag is pushed:
+#
+#   git tag v0.1.0 && git push origin v0.1.0
+#
+# The tag must equal the version in crates/hl7v2/Cargo.toml. The demo crate is
+# `publish = false` and never goes anywhere.
+#
+# Authentication, in order of preference:
+#   1. crates.io Trusted Publishing (OIDC, no secret): on crates.io open the
+#      crate's Settings > Trusted Publishing and add repository `holg/hl7v2`,
+#      workflow `publish.yml`. Available once the crate exists.
+#   2. A `CARGO_REGISTRY_TOKEN` repository secret, needed for the very first
+#      publish or when Trusted Publishing is not set up.
+#
+# `workflow_dispatch` runs everything except the upload, as a rehearsal.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Tag matches crate version
+        if: github.event_name == 'push'
+        run: |
+          version=$(cargo metadata --no-deps --format-version 1 \
+            | jq -r '.packages[] | select(.name == "hl7v2") | .version')
+          if [ "${GITHUB_REF_NAME#v}" != "$version" ]; then
+            echo "tag $GITHUB_REF_NAME does not match crates/hl7v2 version $version"
+            exit 1
+          fi
+
+      - name: Test
+        run: cargo test -p hl7v2 --locked
+
+      - name: Package (verifies the crate builds from its own contents)
+        run: cargo package -p hl7v2 --locked
+
+      - name: Trusted Publishing token
+        id: auth
+        if: github.event_name == 'push'
+        continue-on-error: true
+        uses: rust-lang/crates-io-auth-action@v1
+
+      - name: Publish
+        if: github.event_name == 'push'
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN || steps.auth.outputs.token }}
+        run: |
+          if [ -z "$CARGO_REGISTRY_TOKEN" ]; then
+            echo "no crates.io credentials: set up Trusted Publishing or the CARGO_REGISTRY_TOKEN secret"
+            exit 1
+          fi
+          cargo publish -p hl7v2 --locked
+
+      - name: Rehearsal summary
+        if: github.event_name == 'workflow_dispatch'
+        run: echo "package built; push a v* tag to publish"

@@ -177,6 +177,20 @@ mod tests {
         assert_eq!(linkage.patient_match, Some(true));
     }
 
+    /// The library ships its own copy of `samples/order.hl7` so its tests
+    /// work from the packaged crate; the two must not drift apart.
+    #[test]
+    fn sample_order_matches_the_crate_fixture() {
+        let root = concat!(env!("CARGO_MANIFEST_DIR"), "/../..");
+        let sample = std::fs::read(format!("{root}/samples/order.hl7")).unwrap();
+        let fixture =
+            std::fs::read(format!("{root}/crates/hl7v2/tests/fixtures/order.hl7")).unwrap();
+        assert_eq!(
+            sample, fixture,
+            "samples/order.hl7 differs from crates/hl7v2/tests/fixtures/order.hl7"
+        );
+    }
+
     #[test]
     fn patient_override_produces_the_mismatch_case() {
         let text = order_message(

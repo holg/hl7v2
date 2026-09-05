@@ -1,9 +1,14 @@
 [package]
 name = "hl7v2"
 version = "0.1.0"
-description = "Dependency-free HL7 v2.x message parser with byte spans for every field, repetition, component and subcomponent"
+description = "Dependency-free HL7 v2.x parser and builder with byte spans for every field, repetition, component and subcomponent"
 keywords = ["hl7", "healthcare", "parser", "ihe", "dicom"]
 categories = ["parser-implementations", "science"]
+readme = "README.md"
+documentation = "https://docs.rs/hl7v2"
+homepage = "https://github.com/holg/hl7v2"
+# Everything the crate needs to build and test is inside this directory.
+include = ["src/**", "tests/**", "README.md", "Cargo.toml"]
 edition.workspace = true
 license.workspace = true
 repository.workspace = true

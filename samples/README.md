@@ -9,8 +9,10 @@
 - `order-mismatch.hl7` — same study UID, different patient (`9ZZ9`). Loading it
   with `MR_small.dcm` shows the headline case: linked study, patient mismatch.
 
-Both use the standard `\r` segment terminator. The library's tests use
-`order.hl7` as a fixture and check that it stays CR-terminated.
+Both use the standard `\r` segment terminator. The library's tests use a
+copy of `order.hl7` at `crates/hl7v2/tests/fixtures/order.hl7`, so the
+published crate carries its own fixture; a demo test fails if the two files
+ever differ.
 
 - `anonymized-demo.hl7` — generated from `anonymized-demo.zip` (an anonymised
   five-series CT study, 970 files, not committed) with the `hl7v2` builder:

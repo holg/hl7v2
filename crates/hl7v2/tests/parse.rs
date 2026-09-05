@@ -1,7 +1,7 @@
 use hl7v2::order::{Order, OrderField};
 use hl7v2::{Encoding, Message, ParseError, Path, Warning};
 
-const SAMPLE: &str = include_str!("../../../samples/order.hl7");
+const SAMPLE: &str = include_str!("fixtures/order.hl7");
 
 fn msg(text: &str) -> Message {
     Message::parse(text).expect("parses")

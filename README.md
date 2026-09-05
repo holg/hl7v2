@@ -97,6 +97,21 @@ supported. `dicomscope order` in the demo uses it to write an order that
 matches a real DICOM study, then parses the result and checks the linkage,
 which is how the sample messages in `samples/` are produced.
 
+## Releasing
+
+The library is published to crates.io by `.github/workflows/publish.yml`
+when a `v*` tag is pushed whose version equals `crates/hl7v2/Cargo.toml`:
+
+```sh
+git tag v0.1.0 && git push origin v0.1.0
+```
+
+The workflow tests, packages and uploads. Credentials come from crates.io
+Trusted Publishing (configure repository `holg/hl7v2`, workflow
+`publish.yml` in the crate's settings once it exists) or, for the first
+release, a `CARGO_REGISTRY_TOKEN` repository secret. `workflow_dispatch` runs
+the same steps without uploading. The demo crate is never published.
+
 ## Status
 
 0.1. Parser, query API, order extraction and builder. Not covered yet:
