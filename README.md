@@ -1,5 +1,13 @@
 # hl7kit
 
+[![crates.io](https://img.shields.io/crates/v/hl7kit.svg)](https://crates.io/crates/hl7kit)
+[![docs.rs](https://docs.rs/hl7kit/badge.svg)](https://docs.rs/hl7kit)
+[![CI](https://github.com/holg/hl7v2/actions/workflows/ci.yml/badge.svg)](https://github.com/holg/hl7v2/actions/workflows/ci.yml)
+[![demo](https://github.com/holg/hl7v2/actions/workflows/pages.yml/badge.svg)](https://holg.github.io/hl7v2/)
+[![publish](https://github.com/holg/hl7v2/actions/workflows/publish.yml/badge.svg)](https://github.com/holg/hl7v2/actions/workflows/publish.yml)
+[![license](https://img.shields.io/crates/l/hl7kit.svg)](#license)
+![MSRV 1.85](https://img.shields.io/badge/MSRV-1.85-blue.svg)
+
 A small, dependency-free HL7 v2.x parser for Rust that keeps the **byte span of
 every field, repetition, component and subcomponent**, so you can point back
 into the original message without searching for the value again.
@@ -123,3 +131,11 @@ the same steps without uploading. The demo crate is never published.
 0.1. Parser, query API, order extraction and builder. Not covered yet:
 message-structure validation against segment tables, and batch/file headers
 (FHS/BHS).
+
+## License
+
+Licensed under either of [Apache License, Version 2.0](LICENSE-APACHE) or
+[MIT license](LICENSE-MIT) at your option. Unless you explicitly state
+otherwise, any contribution intentionally submitted for inclusion in the work
+by you shall be dual licensed as above, without any additional terms or
+conditions.
