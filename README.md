@@ -84,7 +84,6 @@ all indices one-based. `PID.3.1` is accepted as an alias for `PID-3.1`.
 | `crates/hl7kit` | The library. `cargo test -p hl7kit` |
 | `demo/dicomscope` | Browser demo: Leptos + wgpu + dicom-rs, no JavaScript. See its [README](demo/dicomscope/README.md) |
 | `samples/` | Fixture HL7 messages used by the tests and the demo |
-| `docs/hl7v2.md` | The design document the demo was built from |
 
 ```sh
 cargo test --workspace                                     # host tests for library and demo domain modules

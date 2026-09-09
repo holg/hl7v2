@@ -149,8 +149,8 @@ HL7 path that supplied it (`IPC-3.1` or `ZDS-1.1` for the study UID) and any
 Every bundle entry carries a `fullUrl` of the form `urn:uuid:…`, and the
 references between entries use the same URNs. FHIR requires a `fullUrl` on
 every entry of a bundle that is not a transaction or batch, and the HL7
-validator rejects a collection without one, contrary to the design prompt's
-assumption. The UUIDs are RFC 9562 version 8 values hashed from the Study
+validator rejects a collection without one. The UUIDs are RFC 9562 version
+8 values hashed from the Study
 Instance UID and the resource type, so the same study yields the same bundle
 on every run, in the browser and on the command line, with no random source
 and no dependency.
