@@ -6,14 +6,14 @@
 
 use super::datetime::hl7_datetime;
 use super::ids::{
-    patient_reference, plain_identifier, typed_identifier, uid_identifier, Authority,
+    plain_identifier, reference, typed_identifier, uid_identifier, Authority, Refs,
     SERVICE_REQUEST_ID,
 };
 use hl7kit::order::Order;
 use hl7kit::Message;
 use serde_json::{json, Value};
 
-pub fn service_request(msg: &Message, order: &Order) -> Value {
+pub fn service_request(msg: &Message, order: &Order, refs: &Refs) -> Value {
     let mut sr = json!({
         "resourceType": "ServiceRequest",
         "id": SERVICE_REQUEST_ID,
@@ -22,7 +22,7 @@ pub fn service_request(msg: &Message, order: &Order) -> Value {
         // an order that reached the imaging system is.
         "status": status(msg.get("ORC-1")),
         "intent": "order",
-        "subject": patient_reference(),
+        "subject": reference(&refs.patient),
     });
 
     let mut identifiers = Vec::new();
@@ -163,7 +163,8 @@ mod tests {
                     ZDS|1.2.3.4^^Application^DICOM\r";
         let msg = Message::parse(text).unwrap();
         let order = Order::extract(&msg);
-        let sr = service_request(&msg, &order);
+        let refs = Refs::for_study("1.2.3.4");
+        let sr = service_request(&msg, &order, &refs);
         assert_eq!(sr["status"], "active");
         assert_eq!(sr["intent"], "order");
         let ids = sr["identifier"].as_array().unwrap();
@@ -197,6 +198,6 @@ mod tests {
         assert_eq!(sr["code"]["text"], "CT head");
         assert_eq!(sr["authoredOn"], "2026-09-05T11:30:00+02:00");
         assert_eq!(sr["requester"]["display"], "Curie, Marie");
-        assert_eq!(sr["subject"]["reference"], "Patient/patient-1");
+        assert_eq!(sr["subject"]["reference"], refs.patient);
     }
 }

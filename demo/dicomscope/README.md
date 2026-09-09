@@ -138,6 +138,42 @@ column shows where every identifier lands in the bundle, together with the
 HL7 path that supplied it (`IPC-3.1` or `ZDS-1.1` for the study UID) and any
 `ConflictingStudyUid` warning from several `IPC` segments.
 
+Every bundle entry carries a `fullUrl` of the form `urn:uuid:…`, and the
+references between entries use the same URNs. FHIR requires a `fullUrl` on
+every entry of a bundle that is not a transaction or batch, and the HL7
+validator rejects a collection without one, contrary to the design prompt's
+assumption. The UUIDs are RFC 9562 version 8 values hashed from the Study
+Instance UID and the resource type, so the same study yields the same bundle
+on every run, in the browser and on the command line, with no random source
+and no dependency.
+
+### Validation
+
+The host binary emits the same bundle the browser builds:
+
+```sh
+cargo run --release -p dicomscope -- fhir samples/dicom/MR_small.dcm samples/order.hl7 -o bundle.json
+java -jar validator_cli.jar bundle.json -version 4.0.1 \
+  -ig de.medizininformatikinitiative.kerndatensatz.bildgebung#2025.0.0-ballot
+```
+
+Run on 2026-09-09 with validator 6.10.4 over four bundles (ORM^O01 and
+OMI^O23 against `MR_small.dcm`, the patient-mismatch order, and the 970-slice
+anonymised CT with its generated order): **0 errors** in each, with the MII
+profile applied to the `ImagingStudy`. The remaining warnings, and why they
+stay:
+
+- `dom-6`, "a resource should have narrative": best practice, not a
+  requirement; no narrative is generated.
+- `Coding has no system` on `ServiceRequest.code`: OBR-4.3 was `L` (a local
+  table name, not a URI), so the code is kept without a system rather than
+  given a fabricated one.
+- `ValueSet … dicom.nema.org … not found` on modality and `sopClass`: the
+  validator cannot fetch DICOM's value sets; the codes are the DICOM ones.
+
+The validator is a development tool and is not part of the demo; the page
+still makes no network request.
+
 ## Supported transfer syntaxes
 
 Pixel decoding is dicom-rs (`dicom-pixeldata` with the `native`, `jpeg`, `rle`

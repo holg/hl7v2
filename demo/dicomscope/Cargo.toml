@@ -21,7 +21,7 @@ dicom-transfer-syntax-registry = "0.10.0"
 dicom-pixeldata = { version = "0.10.0", default-features = false, features = ["jpeg", "native", "rle", "deflate"] }
 bytemuck = { version = "1.25.2", features = ["derive"] }
 # FHIR output is built as serde_json::Value; no typed FHIR crate (see README).
-serde_json = "1"
+serde_json = { version = "1", features = ["preserve_order"] }
 zip = { version = "7.2.0", default-features = false, features = ["deflate"] }
 
 [dev-dependencies]

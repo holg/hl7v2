@@ -26,37 +26,52 @@ pub struct FhirInput<'a> {
     pub linkage: &'a Linkage,
 }
 
-/// The three resources, in bundle order.
+/// The three resources, in bundle order, with their entry identities.
 pub struct Resources {
+    pub refs: ids::Refs,
     pub patient: Value,
     pub service_request: Value,
     pub imaging_study: Value,
 }
 
 pub fn resources(input: &FhirInput<'_>) -> Resources {
+    // Entry identities are derived from the study, so the same study gives
+    // the same URNs on every run and across the panel and the CLI.
+    let seed = input
+        .study
+        .study_uid
+        .as_deref()
+        .or(input.order.study_uid.as_deref())
+        .or(input.study.accession_number.as_deref())
+        .or(input.study.patient_id.as_deref())
+        .unwrap_or("unidentified");
+    let refs = ids::Refs::for_study(seed);
     Resources {
         patient: patient::patient(input.study, Some(input.message)),
-        service_request: service_request::service_request(input.message, input.order),
+        service_request: service_request::service_request(input.message, input.order, &refs),
         imaging_study: imaging_study::imaging_study(
             input.study,
             input.series,
             input.linkage.path != LinkPath::None,
+            &refs,
         ),
+        refs,
     }
 }
 
-/// A `collection` bundle with relative references. `fullUrl` is omitted
-/// on purpose: it would need real UUIDs, and a collection bundle does not
-/// require it.
+/// A `collection` bundle. Every entry carries a `fullUrl` (`urn:uuid:`),
+/// which FHIR requires for any bundle that is not a transaction or batch;
+/// references between the entries use the same URNs. The HL7 validator
+/// rejects a collection without `fullUrl`, so this is not optional.
 pub fn bundle(input: &FhirInput<'_>) -> Value {
     let r = resources(input);
     json!({
         "resourceType": "Bundle",
         "type": "collection",
         "entry": [
-            { "resource": r.patient },
-            { "resource": r.service_request },
-            { "resource": r.imaging_study },
+            { "fullUrl": r.refs.patient, "resource": r.patient },
+            { "fullUrl": r.refs.service_request, "resource": r.service_request },
+            { "fullUrl": r.refs.imaging_study, "resource": r.imaging_study },
         ],
     })
 }
@@ -197,8 +212,17 @@ mod tests {
         // DICOM had no birth date; PID-7 supplies it.
         assert_eq!(p["birthDate"], "1970-01-01");
 
+        // Every entry has a urn:uuid fullUrl and references use those URNs.
+        let full_urls: Vec<String> = b["entry"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|e| e["fullUrl"].as_str().unwrap().to_string())
+            .collect();
+        assert!(full_urls.iter().all(|u| u.starts_with("urn:uuid:")));
+        assert_eq!(full_urls.len(), 3);
         let sr = entry(&b, "ServiceRequest");
-        assert_eq!(sr["subject"]["reference"], "Patient/patient-1");
+        assert_eq!(sr["subject"]["reference"], full_urls[0]);
         let ids = sr["identifier"].as_array().unwrap();
         assert!(ids
             .iter()
@@ -235,10 +259,8 @@ mod tests {
                 ids::MII_IMAGING_STUDY_VERSION
             )
         );
-        assert_eq!(
-            is["basedOn"][0]["reference"],
-            "ServiceRequest/servicerequest-1"
-        );
+        assert_eq!(is["basedOn"][0]["reference"], full_urls[1]);
+        assert_eq!(is["subject"]["reference"], full_urls[0]);
         assert_eq!(is["started"], "2004-08-26", "no (0008,0201): date only");
         assert_eq!(is["numberOfSeries"], 2);
         assert_eq!(is["numberOfInstances"], 3, "multi-frame counts once");

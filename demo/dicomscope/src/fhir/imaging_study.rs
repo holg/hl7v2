@@ -9,9 +9,8 @@
 
 use super::datetime::dicom_datetime;
 use super::ids::{
-    oid_urn, patient_reference, service_request_reference, typed_identifier, uid_identifier,
-    Authority, DCM, IMAGING_STUDY_ID, MII_IMAGING_STUDY_PROFILE, MII_IMAGING_STUDY_VERSION,
-    RFC3986,
+    oid_urn, reference, typed_identifier, uid_identifier, Authority, Refs, DCM, IMAGING_STUDY_ID,
+    MII_IMAGING_STUDY_PROFILE, MII_IMAGING_STUDY_VERSION, RFC3986,
 };
 use crate::dicom::{Series, Study};
 use serde_json::{json, Value};
@@ -19,7 +18,7 @@ use std::collections::BTreeSet;
 
 /// `linked` says whether the study resolved to the order; `basedOn` is
 /// asserted only then, because an unlinked study has no known order.
-pub fn imaging_study(study: &Study, series: &[Series], linked: bool) -> Value {
+pub fn imaging_study(study: &Study, series: &[Series], linked: bool, refs: &Refs) -> Value {
     let mut is = json!({
         "resourceType": "ImagingStudy",
         "id": IMAGING_STUDY_ID,
@@ -27,7 +26,7 @@ pub fn imaging_study(study: &Study, series: &[Series], linked: bool) -> Value {
         // against, so a validator checks the right edition.
         "meta": { "profile": [format!("{MII_IMAGING_STUDY_PROFILE}|{MII_IMAGING_STUDY_VERSION}")] },
         "status": "available",
-        "subject": patient_reference(),
+        "subject": reference(&refs.patient),
     });
 
     let mut identifiers = Vec::new();
@@ -49,7 +48,7 @@ pub fn imaging_study(study: &Study, series: &[Series], linked: bool) -> Value {
     }
 
     if linked {
-        is["basedOn"] = json!([service_request_reference()]);
+        is["basedOn"] = json!([reference(&refs.service_request)]);
     }
 
     // (0008,0020)+(0008,0030), with the time only when (0008,0201) is present.

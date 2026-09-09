@@ -29,8 +29,8 @@ pub enum LinkPath {
 impl LinkPath {
     pub fn label(self) -> &'static str {
         match self {
-            LinkPath::StudyUid => "Study Instance UID (ZDS-1.1 = (0020,000D))",
-            LinkPath::Accession => "Accession Number (OBR-18 = (0008,0050))",
+            LinkPath::StudyUid => "Study Instance UID (IPC-3.1 or ZDS-1.1 = (0020,000D))",
+            LinkPath::Accession => "Accession Number (OBR-18 or IPC-1.1 = (0008,0050))",
             LinkPath::None => "no link",
         }
     }

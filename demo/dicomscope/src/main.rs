@@ -48,6 +48,7 @@ fn main() {
     let subcommand = match args.first().map(String::as_str) {
         Some("order") => Some(order_command as fn(&[String]) -> Result<(), String>),
         Some("pack") => Some(pack_command as fn(&[String]) -> Result<(), String>),
+        Some("fhir") => Some(fhir_command as fn(&[String]) -> Result<(), String>),
         _ => None,
     };
     if let Some(run) = subcommand {
@@ -68,6 +69,8 @@ fn main() {
         eprintln!("  dicomscope order <folder | study.zip | file.dcm> [--patient-id ID] [--accession ACC]");
         eprintln!("                   [--procedure-id ID] [--control-id ID] [-o out.hl7]");
         eprintln!("                                                  write a matching HL7 ORM^O01 and verify the link");
+        eprintln!("  dicomscope fhir <folder | study.zip | file.dcm> <order.hl7> [-o bundle.json]");
+        eprintln!("                                                  emit the FHIR R4 bundle the browser would build");
         eprintln!("  dicomscope pack <folder | study.zip> -o out.zip [--series N,N] [--every K]");
         eprintln!("                                                  rewrite as a clean deflated zip of image instances only");
         eprintln!("  DICOMSCOPE_TAGS=1 prints every tag of checked files");
@@ -563,6 +566,98 @@ fn pack_command(args: &[String]) -> Result<(), String> {
     );
     if written == 0 {
         return Err("nothing matched the filters; the zip is empty".into());
+    }
+    Ok(())
+}
+
+/// `dicomscope fhir <study> <order.hl7> [-o bundle.json]`
+///
+/// Exactly what the browser does after both files are loaded: scan the
+/// study, read the study header from its first slice, parse the order,
+/// resolve the linkage, and emit the FHIR R4 bundle. The bundle goes to
+/// `-o` or stdout; what was linked and from where goes to stderr, so the
+/// JSON can be piped into a validator.
+#[cfg(not(target_arch = "wasm32"))]
+fn fhir_command(args: &[String]) -> Result<(), String> {
+    let mut positional = Vec::new();
+    let mut out = None;
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "-o" | "--out" => {
+                out = Some(args.get(i + 1).cloned().ok_or("-o needs a file name")?);
+                i += 1;
+            }
+            flag if flag.starts_with('-') => return Err(format!("unknown option {flag}")),
+            p => positional.push(p.to_string()),
+        }
+        i += 1;
+    }
+    let [study_path, order_path] = positional.as_slice() else {
+        return Err("fhir needs <study> and <order.hl7>".into());
+    };
+
+    let set = dicom::StudySet::scan(collect_inputs(study_path)?);
+    let Some((_, first)) = set.slice(0, 0) else {
+        return Err(format!("{study_path}: no image series found"));
+    };
+    let bytes = set.bytes(first.file)?;
+    let obj = dicom::load(&bytes).map_err(|e| e.to_string())?;
+    let study = dicom::Study::from_object(&obj);
+
+    let text = std::fs::read(order_path).map_err(|e| format!("{order_path}: {e}"))?;
+    let msg = hl7kit::Message::parse_lossy(&text).map_err(|e| format!("{order_path}: {e}"))?;
+    let order = hl7kit::order::Order::extract(&msg);
+    let linkage = link::resolve(&study, &order);
+    let input = fhir::FhirInput {
+        study: &study,
+        series: &set.series,
+        message: &msg,
+        order: &order,
+        linkage: &linkage,
+    };
+    let bundle = fhir::bundle(&input);
+    let json = serde_json::to_string_pretty(&bundle).map_err(|e| e.to_string())?;
+
+    eprintln!(
+        "study {:?}: {} series, {} slices; order {}: study UID from {}, accession from {}",
+        set.study_uid.as_deref().unwrap_or(""),
+        set.series.len(),
+        set.slice_count(),
+        msg.message_type()
+            .map(|t| format!("{}^{}", t.code, t.trigger))
+            .unwrap_or_default(),
+        order
+            .source_path(hl7kit::order::OrderField::StudyUid)
+            .unwrap_or("nowhere"),
+        order
+            .source_path(hl7kit::order::OrderField::Accession)
+            .unwrap_or("nowhere"),
+    );
+    eprintln!(
+        "link: {}; patient match: {}; basedOn {}; {} bytes of JSON",
+        linkage.path.label(),
+        match linkage.patient_match {
+            Some(true) => "yes",
+            Some(false) => "NO (mismatch)",
+            None => "not comparable",
+        },
+        if linkage.path == link::LinkPath::None {
+            "omitted"
+        } else {
+            "asserted"
+        },
+        json.len()
+    );
+    for w in &order.warnings {
+        eprintln!("order warning: {w}");
+    }
+    match out {
+        Some(file) => {
+            std::fs::write(&file, json.as_bytes()).map_err(|e| format!("{file}: {e}"))?;
+            eprintln!("wrote {file}");
+        }
+        None => println!("{json}"),
     }
     Ok(())
 }
