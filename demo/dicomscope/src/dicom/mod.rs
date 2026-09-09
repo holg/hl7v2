@@ -11,7 +11,7 @@ pub mod transfer_syntax;
 
 pub use load::load;
 pub use pixels::{decode_frame, fallback_window, Frame, Pixels};
-pub use series::{FileEntry, StudySet};
+pub use series::{FileEntry, Series, StudySet};
 pub use study::Study;
 pub use tags::{tag_rows, TagRow};
 

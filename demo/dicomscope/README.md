@@ -20,8 +20,9 @@ no-network guarantee has to be auditable, not promised; see below.
 
 ## What it shows
 
-1. Load DICOM files, a folder, or a zip, plus an HL7 order (ORM^O01 or
-   OMI^O23). Every file is header-scanned, grouped into series by Series
+1. Load DICOM files, a folder, or a zip, plus an HL7 order (ORM^O01 with a
+   `ZDS` segment, or OMI^O23 with `IPC`; `IPC-3` is read first, `ZDS-1`
+   second). Every file is header-scanned, grouped into series by Series
    Instance UID, and sorted by Image Position along the slice normal (falling
    back to Instance Number). Multi-frame files contribute one slice per frame.
    DICOMDIR and non-image files are listed as skipped, with reasons.
@@ -92,6 +93,50 @@ never populate it; and when the study UID is absent, archives such as dcm4che
 derive one from the requested procedure ID or the accession number, or generate
 a random one. The identifier that looks canonical may have been invented
 downstream.
+
+## FHIR output
+
+Once a study and an order are loaded, the app generates a FHIR R4 (4.0.1)
+`Bundle` of type `collection` with three resources: `Patient`,
+`ServiceRequest` and `ImagingStudy`. The FHIR panel shows each as
+pretty-printed JSON with copy and download; both use local browser APIs, no
+request leaves the page. Nothing is validated online: no `$validate`, no
+terminology server, no profile package download. The mapping is built as
+plain JSON (`serde_json`), not with a typed FHIR crate, to keep the bundle
+size a published number.
+
+The `ImagingStudy` declares the MII (Medizininformatik-Initiative) Modul
+Bildgebung profile
+`https://www.medizininformatik-initiative.de/fhir/ext/modul-bildgebung/StructureDefinition/mii-pr-bildgebung-bildgebungsstudie`,
+version 2025.0.0-ballot, the version read when writing the mapping. *The
+ImagingStudy declares the MII Bildgebung profile and populates its core
+elements; it is not validated against the profile, and the modality-specific
+extensions are not emitted.* Element choices follow the HL7 "Version 2 to
+FHIR" implementation guide (PID → Patient, ORC/OBR → ServiceRequest) and the
+R4 ImagingStudy definition; every element a mapping maintainer would question
+has a one-line comment in `src/fhir/` saying where it comes from.
+
+Identifier rules, in three lines:
+
+- Study Instance UIDs use `system: urn:dicom:uid` with `urn:oid:` values;
+  the study UID appears on both `ImagingStudy` and `ServiceRequest`, the row
+  generic v2-to-FHIR mappers leave out.
+- Accession, MRN and order numbers get a `v2-0203` type (`ACSN`, `MR`,
+  `PLAC`, `FILL`); a `system` only when the message carries a URI or ISO OID
+  in the assigning authority (PID-3.4, EI.2–4), else `assigner.display`. No
+  system is fabricated when the message carries no assigning authority.
+- Requested Procedure ID has no `v2-0203` type; it is carried untyped and the
+  link panel says so.
+
+Timezone rule, in one line: a time of day is emitted only when an offset is
+known, (0008,0201) for DICOM or the trailing `±ZZZZ` for HL7; otherwise the
+date alone, because a naive `dateTime` is invalid FHIR.
+
+`ImagingStudy.basedOn` is set only when the study actually linked to the
+order; an unlinked study asserts no relationship. The link panel's third
+column shows where every identifier lands in the bundle, together with the
+HL7 path that supplied it (`IPC-3.1` or `ZDS-1.1` for the study UID) and any
+`ConflictingStudyUid` warning from several `IPC` segments.
 
 ## Supported transfer syntaxes
 
@@ -186,10 +231,13 @@ Measured with `trunk build --release` (opt-level `z`, LTO, `wasm-opt -Oz`):
 
 | File | Raw | Gzipped |
 | --- | --- | --- |
-| `wasm-bindgen loader` | 65 KB | 11 KB |
-| `wasm` | 1080 KB | 465 KB |
+| `wasm-bindgen loader` | 72 KB | 12 KB |
+| `wasm` | 1520 KB | 640 KB |
 
-Total over the wire: **476 KB gzipped** (Rust 1.96, wgpu 30.0.1, leptos 0.8.20, dicom-rs 0.10.0, 2026-09-05).
+Total over the wire: **652 KB gzipped** (Rust 1.96, wgpu 30.0.1, leptos 0.8.20,
+dicom-rs 0.10.0, zip 7.2, serde_json 1, 2026-09-09). The first cut of the
+viewer alone was 476 KB; series scanning, zip, colour, measurements,
+documents and the FHIR output added the rest.
 
 ## The no-network guarantee, and how to verify it
 

@@ -8,6 +8,10 @@
   UID with matching patients.
 - `order-mismatch.hl7` — same study UID, different patient (`9ZZ9`). Loading it
   with `MR_small.dcm` shows the headline case: linked study, patient mismatch.
+- `order-omi.hl7` — the same order as an OMI^O23 (HL7 2.5.1 imaging order):
+  no `ZDS`, the study UID is in `IPC-3`, accession in `IPC-1` and requested
+  procedure ID in `IPC-2`. Links to `MR_small.dcm` by study UID; the link
+  panel shows `IPC-3.1` as the source.
 
 Both use the standard `\r` segment terminator. The library's tests use a
 copy of `order.hl7` at `crates/hl7kit/tests/fixtures/order.hl7`, so the

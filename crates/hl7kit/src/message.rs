@@ -58,6 +58,15 @@ pub enum Warning {
     ByteOrderMark,
     /// Segment terminators were not `\r` (the standard) but `\n` or `\r\n`.
     NonStandardTerminator,
+    /// Several `IPC` segments carry different Study Instance UIDs in
+    /// `IPC-3.1`; the first was used. Recorded on an
+    /// [`Order`](crate::order::Order), not on the message.
+    ConflictingStudyUid {
+        /// Span of the `IPC-3.1` value that was taken.
+        first: Span,
+        /// Span of the first `IPC-3.1` value that disagrees with it.
+        other: Span,
+    },
 }
 
 impl std::fmt::Display for Warning {
@@ -72,6 +81,12 @@ impl std::fmt::Display for Warning {
             Warning::NonStandardTerminator => {
                 write!(f, "segments terminated by LF or CRLF instead of CR")
             }
+            Warning::ConflictingStudyUid { first, other } => write!(
+                f,
+                "IPC segments disagree on the study instance UID (IPC-3.1 at bytes {}..{} used, \
+                 bytes {}..{} differ)",
+                first.start, first.end, other.start, other.end
+            ),
         }
     }
 }

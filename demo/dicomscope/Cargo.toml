@@ -20,6 +20,8 @@ dicom-encoding = "0.10.0"
 dicom-transfer-syntax-registry = "0.10.0"
 dicom-pixeldata = { version = "0.10.0", default-features = false, features = ["jpeg", "native", "rle", "deflate"] }
 bytemuck = { version = "1.25.2", features = ["derive"] }
+# FHIR output is built as serde_json::Value; no typed FHIR crate (see README).
+serde_json = "1"
 zip = { version = "7.2.0", default-features = false, features = ["deflate"] }
 
 [dev-dependencies]
@@ -37,7 +39,10 @@ web-sys = { version = "0.3.105", features = [
   "Blob",
   "BlobPropertyBag",
   "CanvasRenderingContext2d",
+  "Clipboard",
   "ImageData",
+  "Navigator",
+  "Selection",
   "Url",
   "DataTransfer",
   "DomRect",

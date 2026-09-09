@@ -62,6 +62,8 @@ pub struct Slice {
     /// Image Position (Patient) projected onto the slice normal, when known.
     pub position: Option<f64>,
     pub sop_instance_uid: String,
+    /// (0008,0016), for `ImagingStudy.series.instance.sopClass`.
+    pub sop_class_uid: String,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -258,6 +260,7 @@ impl StudySet {
                         instance_number: meta.instance_number,
                         position: meta.position,
                         sop_instance_uid: meta.sop_instance_uid.clone(),
+                        sop_class_uid: meta.sop_class_uid.clone(),
                     });
                 }
             }
@@ -382,6 +385,7 @@ struct Meta {
     instance_number: Option<i32>,
     position: Option<f64>,
     sop_instance_uid: String,
+    sop_class_uid: String,
     rows: u32,
     cols: u32,
 }
@@ -435,6 +439,12 @@ fn classify<R: Read>(name: &str, reader: R) -> Result<Classified, String> {
         instance_number: int(&obj, tags::INSTANCE_NUMBER),
         position: position_key(&obj),
         sop_instance_uid: string(&obj, tags::SOP_INSTANCE_UID).unwrap_or_default(),
+        sop_class_uid: string(&obj, tags::SOP_CLASS_UID).unwrap_or_else(|| {
+            obj.meta()
+                .media_storage_sop_class_uid()
+                .trim_end_matches('\0')
+                .to_string()
+        }),
         rows,
         cols,
     };

@@ -59,7 +59,7 @@ pub fn Hl7View(
             <p>{move || summary.get()}</p>
             <p class="legend">
                 {OrderField::ALL.iter().map(|&f| view! {
-                    <mark class=css_class(f)>{f.label()} " (" {f.path()} ")"</mark>
+                    <mark class=css_class(f)>{f.label()} " (" {f.paths().join(" or ")} ")"</mark>
                 }).collect_view()}
             </p>
             {move || {

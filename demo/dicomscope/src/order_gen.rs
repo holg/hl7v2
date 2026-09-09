@@ -144,6 +144,7 @@ mod tests {
             modality: Some("CT".into()),
             rows: 512,
             cols: 512,
+            ..Study::default()
         }
     }
 
@@ -182,13 +183,15 @@ mod tests {
     #[test]
     fn sample_order_matches_the_crate_fixture() {
         let root = concat!(env!("CARGO_MANIFEST_DIR"), "/../..");
-        let sample = std::fs::read(format!("{root}/samples/order.hl7")).unwrap();
-        let fixture =
-            std::fs::read(format!("{root}/crates/hl7kit/tests/fixtures/order.hl7")).unwrap();
-        assert_eq!(
-            sample, fixture,
-            "samples/order.hl7 differs from crates/hl7kit/tests/fixtures/order.hl7"
-        );
+        for name in ["order.hl7", "order-omi.hl7"] {
+            let sample = std::fs::read(format!("{root}/samples/{name}")).unwrap();
+            let fixture =
+                std::fs::read(format!("{root}/crates/hl7kit/tests/fixtures/{name}")).unwrap();
+            assert_eq!(
+                sample, fixture,
+                "samples/{name} differs from crates/hl7kit/tests/fixtures/{name}"
+            );
+        }
     }
 
     #[test]

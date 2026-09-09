@@ -13,6 +13,7 @@
 
 mod dicom;
 mod error;
+mod fhir;
 mod link;
 mod measure;
 #[cfg(not(target_arch = "wasm32"))]

@@ -1,6 +1,6 @@
 [package]
 name = "hl7kit"
-version = "0.1.0"
+version = "0.2.0"
 description = "Dependency-free HL7 v2.x parser and builder with byte spans for every field, repetition, component and subcomponent"
 keywords = ["hl7", "healthcare", "parser", "ihe", "dicom"]
 categories = ["parser-implementations", "science"]

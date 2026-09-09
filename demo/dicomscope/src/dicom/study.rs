@@ -24,6 +24,20 @@ pub struct Study {
     pub rows: u32,
     /// (0028,0011)
     pub cols: u32,
+    /// (0010,0010), raw PN as stored.
+    pub patient_name: Option<String>,
+    /// (0010,0030), DICOM DA.
+    pub patient_birth_date: Option<String>,
+    /// (0010,0040): `M`, `F`, `O`.
+    pub patient_sex: Option<String>,
+    /// (0008,0020), DICOM DA.
+    pub study_date: Option<String>,
+    /// (0008,0030), DICOM TM.
+    pub study_time: Option<String>,
+    /// (0008,0201) Timezone Offset From UTC, `±HHMM`.
+    pub timezone_offset: Option<String>,
+    /// (0008,1030)
+    pub study_description: Option<String>,
 }
 
 impl Study {
@@ -42,6 +56,13 @@ impl Study {
             modality: string(obj, tags::MODALITY),
             rows: number(obj, tags::ROWS).unwrap_or(0),
             cols: number(obj, tags::COLUMNS).unwrap_or(0),
+            patient_name: string(obj, tags::PATIENT_NAME),
+            patient_birth_date: string(obj, tags::PATIENT_BIRTH_DATE),
+            patient_sex: string(obj, tags::PATIENT_SEX),
+            study_date: string(obj, tags::STUDY_DATE),
+            study_time: string(obj, tags::STUDY_TIME),
+            timezone_offset: string(obj, tags::TIMEZONE_OFFSET_FROM_UTC),
+            study_description: string(obj, tags::STUDY_DESCRIPTION),
         }
     }
 }

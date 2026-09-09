@@ -9,14 +9,18 @@ use crate::dicom::pixels::FrameInfo;
 use crate::dicom::sr::{self, DocumentKind};
 use crate::dicom::{self, FileEntry, Study, StudySet, TagRow};
 use crate::error::AppError;
+use crate::fhir::{self, FhirInput};
 use crate::link::{self, Linkage};
 use crate::measure::Measurement;
 use crate::render::{Renderer, Uniforms};
 use crate::thumbnail::{thumbnail, Thumbnail};
 use crate::ui::document_view::DocumentContent;
+use crate::ui::fhir_panel::FhirText;
 use crate::ui::file_drop::FilesResult;
 use crate::ui::viewer::{sync_backing_size, Tool, ViewControls, Viewport};
-use crate::ui::{DocumentView, FileDrop, Hl7View, LinkPanel, SeriesPanel, TagTree, WindowControls};
+use crate::ui::{
+    DocumentView, FhirPanel, FileDrop, Hl7View, LinkPanel, SeriesPanel, TagTree, WindowControls,
+};
 use hl7kit::order::{Order, OrderField};
 use hl7kit::{Message, Span};
 use leptos::html;
@@ -466,6 +470,40 @@ pub fn App() -> impl IntoView {
         Some(link::resolve(&d.study, &h.order))
     });
 
+    // FHIR R4 bundle for the pair. Rebuilt on any change of study, order or
+    // linkage; generation is a few allocations, so no debouncing.
+    let fhir_output = Memo::new(move |_| -> Option<Arc<FhirText>> {
+        let d = dicom_state.get()?;
+        let h = hl7_state.get()?;
+        let linkage = linkage.get()?;
+        let set = study_set.get();
+        let series: &[dicom::Series] = set.as_ref().map(|s| s.series.as_slice()).unwrap_or(&[]);
+        let msg = Message::parse(h.raw.as_str()).ok()?;
+        let input = FhirInput {
+            study: &d.study,
+            series,
+            message: &msg,
+            order: &h.order,
+            linkage: &linkage,
+        };
+        let r = fhir::resources(&input);
+        let bundle = fhir::bundle(&input);
+        let pretty = |v: &serde_json::Value| serde_json::to_string_pretty(v).unwrap_or_default();
+        Some(Arc::new(FhirText {
+            patient: pretty(&r.patient),
+            service_request: pretty(&r.service_request),
+            imaging_study: pretty(&r.imaging_study),
+            bundle: pretty(&bundle),
+        }))
+    });
+    let patient_authority = Signal::derive(move || {
+        let h = hl7_state.get()?;
+        let msg = Message::parse(h.raw.as_str()).ok()?;
+        msg.get("PID-3.4")
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+    });
+
     let range = Signal::derive(move || frame_info().map(|f| f.value_range).unwrap_or((0.0, 1.0)));
     let default_window = Signal::derive(move || frame_info().and_then(|f| f.default_window));
     let is_color = Signal::derive(move || frame_info().map(|f| f.color).unwrap_or(false));
@@ -737,7 +775,11 @@ pub fn App() -> impl IntoView {
                         view! { <WindowControls window=window range=range default_window=default_window /> }.into_any()
                     }}
                     <h2>"Linkage"</h2>
-                    <LinkPanel linkage=Signal::derive(move || linkage.get()) />
+                    <LinkPanel linkage=Signal::derive(move || linkage.get())
+                        order=Signal::derive(move || hl7_state.get().map(|h| h.order.clone()))
+                        patient_authority=patient_authority />
+                    <h2>"FHIR R4"</h2>
+                    <FhirPanel output=Signal::derive(move || fhir_output.get()) />
                 </section>
                 <section>
                     <h2>"HL7 order"</h2>

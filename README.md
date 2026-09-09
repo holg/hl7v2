@@ -15,7 +15,9 @@ into the original message without searching for the value again.
 The crate lives in [`crates/hl7kit`](crates/hl7kit) and on
 [crates.io](https://crates.io/crates/hl7kit). The browser DICOM viewer in
 [`demo/dicomscope`](demo/dicomscope) is its demo: it uses the spans to
-highlight the four order identifiers in place and links them to a DICOM study.
+highlight the four order identifiers in place, links them to a DICOM study,
+and emits the pair as a FHIR R4 bundle (`Patient`, `ServiceRequest`,
+`ImagingStudy` with the MII Bildgebung profile).
 
 **Live demo:** <https://holg.github.io/hl7v2/>, built from `main` by
 `.github/workflows/pages.yml`. It runs entirely in your browser: files you
