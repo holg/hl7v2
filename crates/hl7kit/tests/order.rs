@@ -103,7 +103,7 @@ fn differing_ipc3_takes_first_and_warns() {
         }
         w => panic!("unexpected warning {w:?}"),
     }
-    assert!(o.warnings[0].to_string().contains("IPC"));
+    assert!(o.warnings[0].to_string().contains("study instance UID"));
 }
 
 #[test]
@@ -111,6 +111,63 @@ fn absent_everything_is_none() {
     let o = Order::extract(&parse("MSH|^~\\&|A|B|||||OMI^O23|1|P|2.5.1\rPID|1\r"));
     assert_eq!(o, Order::default());
     assert_eq!(o.source_path(OrderField::StudyUid), None);
+}
+
+const ORU: &str = include_str!("fixtures/order-oru.hl7");
+
+#[test]
+fn oru_takes_study_uid_from_the_dcm_110180_obx() {
+    let msg = parse(ORU);
+    let o = Order::extract(&msg);
+    assert_eq!(o.study_uid.as_deref(), Some(UID));
+    assert_eq!(o.study_uid_source, Some(StudyUidSource::Obx));
+    assert!(o
+        .source_path(OrderField::StudyUid)
+        .unwrap()
+        .starts_with("OBX-5"));
+    let (span, _) = o
+        .spans
+        .iter()
+        .find(|(_, f)| *f == OrderField::StudyUid)
+        .unwrap();
+    assert_eq!(span.slice(msg.raw()), UID);
+    // The other OBX segments (series and instance counts) are ignored.
+    assert_eq!(o.accession.as_deref(), Some("ACC-2026-0001"));
+    assert_eq!(o.source_path(OrderField::Accession), Some("OBR-18"));
+    assert!(o.warnings.is_empty());
+}
+
+#[test]
+fn obx_matches_by_text_when_the_code_is_local() {
+    let text = ORU.replace("110180^Study Instance UID^DCM", "SUID^Study Instance UID^L");
+    let o = Order::extract(&parse(&text));
+    assert_eq!(o.study_uid.as_deref(), Some(UID));
+    assert_eq!(o.study_uid_source, Some(StudyUidSource::Obx));
+    let none = ORU.replace("110180^Study Instance UID^DCM", "X^Something else^L");
+    let o = Order::extract(&parse(&none));
+    assert_eq!(o.study_uid, None);
+    assert_eq!(o.study_uid_source, None);
+}
+
+#[test]
+fn ipc_and_zds_win_over_obx_and_disagreement_warns() {
+    let agree = format!("{ORU}ZDS|{UID}^^Application^DICOM\r");
+    let o = Order::extract(&parse(&agree));
+    assert_eq!(o.study_uid_source, Some(StudyUidSource::Zds1));
+    assert!(o.warnings.is_empty());
+
+    let disagree = format!("{ORU}ZDS|9.9.9^^Application^DICOM\r");
+    let msg = parse(&disagree);
+    let o = Order::extract(&msg);
+    assert_eq!(o.study_uid.as_deref(), Some("9.9.9"), "ZDS precedes OBX");
+    assert_eq!(o.warnings.len(), 1);
+    match &o.warnings[0] {
+        Warning::ConflictingStudyUid { first, other } => {
+            assert_eq!(first.slice(msg.raw()), "9.9.9");
+            assert_eq!(other.slice(msg.raw()), UID);
+        }
+        w => panic!("unexpected {w:?}"),
+    }
 }
 
 #[test]

@@ -12,6 +12,11 @@
   no `ZDS`, the study UID is in `IPC-3`, accession in `IPC-1` and requested
   procedure ID in `IPC-2`. Links to `MR_small.dcm` by study UID; the link
   panel shows `IPC-3.1` as the source.
+- `order-oru.hl7` — an ORU^R01 image-availability notification for the same
+  study, as a PACS sends it back to the RIS: no `ZDS`, no `IPC`, the study
+  UID sits in an `OBX` whose `OBX-3` is `110180^Study Instance UID^DCM`.
+  The other `OBX` segments (series and instance counts) are ignored. Links
+  by study UID from the `OBX`, accession from `OBR-18`.
 
 Both use the standard `\r` segment terminator. The library's tests use a
 copy of `order.hl7` at `crates/hl7kit/tests/fixtures/order.hl7`, so the

@@ -183,7 +183,7 @@ mod tests {
     #[test]
     fn sample_order_matches_the_crate_fixture() {
         let root = concat!(env!("CARGO_MANIFEST_DIR"), "/../..");
-        for name in ["order.hl7", "order-omi.hl7"] {
+        for name in ["order.hl7", "order-omi.hl7", "order-oru.hl7"] {
             let sample = std::fs::read(format!("{root}/samples/{name}")).unwrap();
             let fixture =
                 std::fs::read(format!("{root}/crates/hl7kit/tests/fixtures/{name}")).unwrap();

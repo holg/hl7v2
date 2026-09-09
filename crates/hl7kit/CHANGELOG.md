@@ -19,10 +19,15 @@
   `OBR-18` and `OBR-19` are blank.
 - `StudyUidSource` says which segment supplied the UID.
 - `Order::source_path()` gives the path that supplied any field.
-- `Warning::ConflictingStudyUid`: several `IPC` segments with different
-  `IPC-3.1` values. The first is used; the warning is recorded on `Order`.
-- Fixture `tests/fixtures/order-omi.hl7`, an OMI^O23 for the same study as
-  the ORM^O01 fixture.
+- ORU^R01 image-availability support: the study UID is read from an `OBX`
+  whose `OBX-3` is DCM `110180` (Study Instance UID) or names it, after
+  `IPC-3.1` and `ZDS-1.1`. `StudyUidSource::Obx` reports it.
+- `Warning::ConflictingStudyUid`: the study UID sources disagree (several
+  `IPC` segments, or `IPC`/`ZDS` against an `OBX`). The first in precedence
+  is used; the warning is recorded on `Order`.
+- Fixtures `tests/fixtures/order-omi.hl7` (OMI^O23) and
+  `tests/fixtures/order-oru.hl7` (ORU^R01) for the same study as the
+  ORM^O01 fixture.
 
 ## 0.1.0
 

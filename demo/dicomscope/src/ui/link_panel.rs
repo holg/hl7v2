@@ -67,6 +67,15 @@ pub fn LinkPanel(
                                 }}</p>
                             }.into_any()
                         }}
+                        {l.key_conflict().map(|k| view! {
+                            <p class="banner danger">
+                                <strong>{match k {
+                                    crate::link::KeyConflict::AccessionDiffers => "Keys disagree: accession number differs on a UID-linked study. ",
+                                    crate::link::KeyConflict::StudyUidDiffers => "Keys disagree: study UID differs on an accession-linked study. ",
+                                }}</strong>
+                                {k.explanation()}
+                            </p>
+                        })}
                         {warnings.into_iter().map(|w| view! {
                             <p class="banner danger"><strong>"Order warning: "</strong>{w}</p>
                         }).collect_view()}

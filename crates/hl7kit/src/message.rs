@@ -58,13 +58,14 @@ pub enum Warning {
     ByteOrderMark,
     /// Segment terminators were not `\r` (the standard) but `\n` or `\r\n`.
     NonStandardTerminator,
-    /// Several `IPC` segments carry different Study Instance UIDs in
-    /// `IPC-3.1`; the first was used. Recorded on an
+    /// The message carries more than one Study Instance UID and they
+    /// differ: several `IPC` segments, or `IPC`/`ZDS` against an `OBX`.
+    /// The first in precedence was used. Recorded on an
     /// [`Order`](crate::order::Order), not on the message.
     ConflictingStudyUid {
-        /// Span of the `IPC-3.1` value that was taken.
+        /// Span of the value that was taken.
         first: Span,
-        /// Span of the first `IPC-3.1` value that disagrees with it.
+        /// Span of the first value that disagrees with it.
         other: Span,
     },
 }
@@ -83,7 +84,7 @@ impl std::fmt::Display for Warning {
             }
             Warning::ConflictingStudyUid { first, other } => write!(
                 f,
-                "IPC segments disagree on the study instance UID (IPC-3.1 at bytes {}..{} used, \
+                "the message carries differing study instance UIDs (bytes {}..{} used, \
                  bytes {}..{} differ)",
                 first.start, first.end, other.start, other.end
             ),
