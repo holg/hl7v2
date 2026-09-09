@@ -75,7 +75,21 @@ jobs:
 
       - name: Write the report page
         run: |
-          summary=$(grep -E 'errors,' out/fhir/validation.txt | sed 's/^/    /')
+          # With -output the validator writes one OperationOutcome per input
+          # into a Bundle instead of printing per-file summaries; count the
+          # issues by severity from that.
+          summary=$(jq -r '
+            def counts: [.. | objects | select(has("severity")) | .severity]
+              | group_by(.) | map("\(length) \(.[0])") | join(", ")
+              | if . == "" then "no issues" else . end;
+            (["bundle-orm.json", "bundle-omi.json", "bundle-mismatch.json"]) as $names
+            | [ .entry | to_entries[] | "\($names[.key]): \(.value.resource | counts)" ]
+              + ["all: \(counts)"]
+            | .[]' out/fhir/validation.json | sed 's/^/    /')
+          echo "$summary"
+          if echo "$summary" | grep -qE '[1-9][0-9]* (error|fatal)'; then
+            echo "OperationOutcome contains errors"; exit 1
+          fi
           cat > out/fhir/index.html <<EOF
           <!doctype html><meta charset="utf-8"><title>dicomscope FHIR reference bundles</title>
           <style>body{font:14px/1.5 system-ui,sans-serif;max-width:60rem;margin:2rem auto;padding:0 1rem}pre{background:#f4f4f4;padding:.5rem;overflow:auto}</style>
