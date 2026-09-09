@@ -25,7 +25,12 @@ env:
   TRUNK_VERSION: 0.21.14
 
 jobs:
+  # Reference FHIR bundles, validated; served at /fhir/ next to the demo.
+  fhir:
+    uses: ./.github/workflows/fhir.yml
+
   build:
+    needs: fhir
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -48,6 +53,12 @@ jobs:
           for f in dist/*.wasm dist/*.js; do
             printf '%s raw %s gzip %s\n' "$f" "$(stat -c %s "$f")" "$(gzip -9c "$f" | wc -c)"
           done
+
+      - name: Add the validated FHIR bundles and report
+        uses: actions/download-artifact@v4
+        with:
+          name: fhir-bundles
+          path: demo/dicomscope/dist/fhir
 
       - uses: actions/upload-pages-artifact@v3
         with:

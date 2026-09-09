@@ -128,6 +128,15 @@ pub fn FhirPanel(output: Signal<Option<Arc<FhirText>>>) -> impl IntoView {
                         {move || status.get().map(|s| view! { <small>{s}</small> })}
                     </div>
                     <pre class="json" node_ref=pre_ref>{current_text}</pre>
+                    <p><small>
+                        "FHIR R4 (4.0.1). The ImagingStudy declares the MII Bildgebung profile, version 2025.0.0-ballot, \
+                         and populates its core elements; it is not validated here. Bundles built by this mapping from \
+                         the sample study and orders are validated on every commit with the HL7 FHIR validator against \
+                         R4 and the MII package, with 0 errors: see the "
+                        <a href="fhir/" target="_blank" rel="noopener">"published reference bundles and report"</a>
+                        ". Expected warnings there: no narrative (best practice), a code without a URI system when \
+                         OBR-4.3 names a local table, and DICOM value sets the validator cannot fetch."
+                    </small></p>
                 }.into_any(),
             }}
         </div>

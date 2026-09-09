@@ -5,6 +5,7 @@
 [![CI](https://github.com/holg/hl7v2/actions/workflows/ci.yml/badge.svg)](https://github.com/holg/hl7v2/actions/workflows/ci.yml)
 [![demo](https://github.com/holg/hl7v2/actions/workflows/pages.yml/badge.svg)](https://holg.github.io/hl7v2/)
 [![publish](https://github.com/holg/hl7v2/actions/workflows/publish.yml/badge.svg)](https://github.com/holg/hl7v2/actions/workflows/publish.yml)
+[![fhir validation](https://github.com/holg/hl7v2/actions/workflows/fhir.yml/badge.svg)](https://holg.github.io/hl7v2/fhir/)
 [![license](https://img.shields.io/crates/l/hl7kit.svg)](#license)
 ![MSRV 1.85](https://img.shields.io/badge/MSRV-1.85-blue.svg)
 

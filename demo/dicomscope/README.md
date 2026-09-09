@@ -174,6 +174,13 @@ stay:
 The validator is a development tool and is not part of the demo; the page
 still makes no network request.
 
+This runs on every commit: `.github/workflows/fhir.yml` builds the host
+tool, generates the three sample bundles, validates them, and fails the
+build on any error. The Pages workflow publishes the bundles, the validator
+output and its OperationOutcome at <https://holg.github.io/hl7v2/fhir/>, so
+the claim above can be checked against the current commit rather than
+against this paragraph.
+
 ## Supported transfer syntaxes
 
 Pixel decoding is dicom-rs (`dicom-pixeldata` with the `native`, `jpeg`, `rle`
