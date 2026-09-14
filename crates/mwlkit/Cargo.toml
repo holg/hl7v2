@@ -1,0 +1,22 @@
+[package]
+name = "mwlkit"
+version = "0.1.0"
+description = "Turn an HL7 v2 imaging order into a DICOM Modality Worklist item, with every mapping choice sourced and every invented value reported"
+keywords = ["dicom", "hl7", "worklist", "mwl", "ihe"]
+categories = ["science", "encoding"]
+readme = "README.md"
+documentation = "https://docs.rs/mwlkit"
+homepage = "https://github.com/holg/hl7v2"
+include = ["src/**", "tests/**", "README.md", "Cargo.toml"]
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+hl7kit = { version = "0.2.0", path = "../hl7kit" }
+dicom-core = "0.10.0"
+dicom-dictionary-std = "0.10.0"
+dicom-object = "0.10.0"
+
+[dev-dependencies]

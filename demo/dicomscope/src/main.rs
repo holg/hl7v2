@@ -20,6 +20,7 @@ mod measure;
 mod order_gen;
 mod thumbnail;
 mod view;
+mod worklist;
 
 #[cfg(target_arch = "wasm32")]
 mod app;
@@ -38,7 +39,7 @@ fn main() {
 ///
 /// * `dicomscope <file.dcm | folder | study.zip>...` checks that every input
 ///   loads, scans into series and decodes, and prints what it found;
-/// * `dicomscope order <folder | study.zip | file.dcm> [options]` writes an
+/// * `dicomscope order <folder |eprintln!("  dicomscope order <folder | study.zip | file.dcm> [--patient-id ID] [--accession ACC] [--omi] [--steps N] [--no-uid]");| file.dcm> [options]` writes an
 ///   HL7 ORM^O01 that matches the study, then parses it back with the
 ///   `hl7kit` crate and reports the linkage. That is how the sample orders in
 ///   `samples/` are produced, and it is a round trip through both crates.
@@ -66,7 +67,7 @@ fn main() {
         eprintln!("dicomscope is a browser application; build it with `trunk build --release`.");
         eprintln!("Host usage:");
         eprintln!("  dicomscope <file.dcm | folder | study.zip>...   check inputs with the browser's code path");
-        eprintln!("  dicomscope order <folder | study.zip | file.dcm> [--patient-id ID] [--accession ACC]");
+        eprintln!("  dicomscope order <folder | study.zip | file.dcm> [--patient-id ID] [--accession ACC] [--omi] [--steps N] [--no-uid]");
         eprintln!("                   [--procedure-id ID] [--control-id ID] [-o out.hl7]");
         eprintln!("                                                  write a matching HL7 ORM^O01 and verify the link");
         eprintln!("  dicomscope fhir <folder | study.zip | file.dcm> <order.hl7> [-o bundle.json]");
@@ -223,7 +224,7 @@ fn check(path: &str) -> Result<String, String> {
     Ok(line)
 }
 
-/// `dicomscope order <path> [--patient-id ID] [--accession ACC]
+/// `dicomscope order <path> [--patient-id ID] [--accession ACC] [--omi] [--steps N] [--no-uid]
 /// [--procedure-id ID] [--control-id ID] [-o out.hl7]`
 ///
 /// Reads one instance header from the study (streaming the first `.dcm`
@@ -258,6 +259,14 @@ fn order_command(args: &[String]) -> Result<(), String> {
             }
             "--control-id" => {
                 details.control_id = Some(next(i)?);
+                i += 1;
+            }
+            "--omi" => details.omi = true,
+            "--no-uid" => details.no_uid = true,
+            "--steps" => {
+                details.steps = next(i)?
+                    .parse()
+                    .map_err(|_| "--steps needs a number".to_string())?;
                 i += 1;
             }
             "-o" | "--out" => {
@@ -328,6 +337,25 @@ fn order_command(args: &[String]) -> Result<(), String> {
             None => "not comparable",
         }
     );
+    // The worklist item the order would produce, as the demo builds it.
+    match worklist::build(&msg, &order) {
+        Ok(w) => {
+            eprintln!(
+                "worklist item: study UID {} ({}), {} bytes, {} note(s)",
+                w.item.study_uid.value,
+                match w.item.study_uid.origin {
+                    mwlkit::StudyUidOrigin::FromOrder(s) => format!("from {}", s.path()),
+                    mwlkit::StudyUidOrigin::Generated(g) => format!("generated {g}"),
+                },
+                w.bytes.len(),
+                w.item.warnings.len()
+            );
+            for n in &w.item.warnings {
+                eprintln!("  note: {n}");
+            }
+        }
+        Err(e) => eprintln!("worklist item refused: {e}"),
+    }
     if linkage.path == link::LinkPath::None {
         return Err("the generated order does not link back to the study".into());
     }

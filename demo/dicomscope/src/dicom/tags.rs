@@ -44,6 +44,14 @@ pub fn tag_rows(obj: &DefaultDicomObject) -> Vec<TagRow> {
     rows
 }
 
+/// Rows for a bare data set without a file meta group, such as a worklist
+/// item.
+pub fn dataset_rows(ds: &InMemDicomObject) -> Vec<TagRow> {
+    let mut rows = Vec::new();
+    push_dataset(&mut rows, ds, 0);
+    rows
+}
+
 fn push_dataset(rows: &mut Vec<TagRow>, ds: &InMemDicomObject, depth: usize) {
     for e in ds.iter() {
         match e.value() {

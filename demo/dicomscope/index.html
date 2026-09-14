@@ -6,8 +6,8 @@
     <title>dicomscope</title>
     <link data-trunk rel="rust" data-wasm-opt="z" data-wasm-opt-params="--enable-bulk-memory --enable-nontrapping-float-to-int --enable-sign-ext --enable-mutable-globals --enable-reference-types --enable-multivalue" />
     <style>
-      :root { color-scheme: light dark; --danger: #b3261e; --danger-bg: #fde7e5; --ok: #1b6e3a; --ok-bg: #e4f4ea; --muted: #666; --border: #ccc; }
-      @media (prefers-color-scheme: dark) { :root { --danger-bg: #4a1f1c; --ok-bg: #1e3a29; --muted: #aaa; --border: #444; } }
+      :root { color-scheme: light dark; --danger: #b3261e; --danger-bg: #fde7e5; --ok: #1b6e3a; --ok-bg: #e4f4ea; --warn: #9a6a00; --warn-bg: #fff4d6; --muted: #666; --border: #ccc; }
+      @media (prefers-color-scheme: dark) { :root { --danger-bg: #4a1f1c; --ok-bg: #1e3a29; --warn-bg: #4a3a12; --muted: #aaa; --border: #444; } }
       body { margin: 0; font: 14px/1.45 system-ui, sans-serif; }
       main { max-width: 1400px; margin: 0 auto; padding: 1rem; }
       h1 { font-size: 1.25rem; margin: 0 0 .25rem; }
@@ -17,6 +17,7 @@
       .banner.danger { background: var(--danger-bg); border: 1px solid var(--danger); }
       .banner.ok { background: var(--ok-bg); border: 1px solid var(--ok); }
       .banner.info { border: 1px solid var(--border); }
+      .banner.warn { background: var(--warn-bg); border: 1px solid var(--warn); }
       .cols { display: grid; grid-template-columns: 1fr; gap: 1rem; }
       @media (min-width: 900px) { .cols { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); } }
       .loadbar { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }

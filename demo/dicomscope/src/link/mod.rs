@@ -302,3 +302,298 @@ mod tests {
         assert!(!l.linked_with_patient_mismatch());
     }
 }
+
+// ---------------------------------------------------------------------------
+// The chain: order → worklist item → image → FHIR
+// ---------------------------------------------------------------------------
+
+/// The identifiers a worklist item carries, free of `mwlkit` and dicom-rs
+/// types so the chain can be tested with literals.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct WorklistKeys {
+    pub study_uid: Option<String>,
+    /// True when the item generated the UID because the order had none.
+    pub study_uid_generated: bool,
+    pub accession: Option<String>,
+    /// True when the accession number was cut to the SH limit.
+    pub accession_truncated: bool,
+    pub patient_id: Option<String>,
+    pub procedure_id: Option<String>,
+}
+
+impl WorklistKeys {
+    pub fn from_item(item: &mwlkit::WorklistItem) -> WorklistKeys {
+        use dicom_dictionary_std::tags;
+        let get = |tag| {
+            item.dataset
+                .get(tag)
+                .and_then(|e| e.value().to_str().ok())
+                .and_then(|s| clean(Some(&s)))
+        };
+        WorklistKeys {
+            study_uid: Some(item.study_uid.value.clone()),
+            study_uid_generated: matches!(item.study_uid.origin, mwlkit::StudyUidOrigin::Generated(_)),
+            accession: get(tags::ACCESSION_NUMBER),
+            accession_truncated: item.warnings.iter().any(|w| {
+                matches!(w, mwlkit::Warning::Truncated { tag, .. } if *tag == tags::ACCESSION_NUMBER)
+            }),
+            patient_id: get(tags::PATIENT_ID),
+            procedure_id: get(tags::REQUESTED_PROCEDURE_ID),
+        }
+    }
+}
+
+/// One identifier followed through the three hops.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChainRow {
+    pub name: &'static str,
+    pub order: Option<String>,
+    pub worklist: Option<String>,
+    pub image: Option<String>,
+}
+
+impl ChainRow {
+    /// Order → worklist: `None` when either side is absent.
+    pub fn order_to_worklist(&self) -> Option<bool> {
+        Some(self.order.as_deref()? == self.worklist.as_deref()?)
+    }
+    /// Worklist → image: `None` when either side is absent.
+    pub fn worklist_to_image(&self) -> Option<bool> {
+        Some(self.worklist.as_deref()? == self.image.as_deref()?)
+    }
+}
+
+/// What following the chain revealed, beyond what the pairwise linkage
+/// already says.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChainFinding {
+    /// The order carried no Study Instance UID, the worklist generated
+    /// one, and the images carry exactly that UID. The link holds, but the
+    /// RIS never learned the UID: it can find this study only by accession.
+    GeneratedUidReachedImage,
+    /// The order carried no UID and the worklist generated one, but the
+    /// images carry a different UID. Whoever produced the images did not
+    /// take this worklist entry (or the archive re-keyed the study).
+    GeneratedUidNotInImage,
+    /// The order announced a UID, the worklist carried it, and the images
+    /// carry another one. The UID was replaced downstream of the worklist.
+    OrderUidReplacedDownstream,
+    /// The accession number was cut to 16 characters on the way into the
+    /// worklist. The images carry the cut value, the RIS holds the full
+    /// one: the working key no longer matches.
+    TruncatedAccessionBreaksLink,
+    /// The accession number was cut, and the images do not carry the cut
+    /// value either.
+    TruncatedAccessionAndImageDiffers,
+    /// Every identifier present on all three hops agrees.
+    Intact,
+}
+
+impl ChainFinding {
+    pub fn explanation(self) -> &'static str {
+        match self {
+            ChainFinding::GeneratedUidReachedImage => {
+                "The order had no Study Instance UID, so the worklist generated one, and the images \
+                 carry exactly that UID. The link holds by UID, but the RIS never learned it: from \
+                 the RIS side this study is reachable only through the accession number. If the \
+                 accession is ever re-keyed, nothing ties the images to the order."
+            }
+            ChainFinding::GeneratedUidNotInImage => {
+                "The order had no Study Instance UID, the worklist generated one, and the images \
+                 carry a different UID. The modality did not take this worklist entry, or the \
+                 archive re-keyed the study afterwards. Only the accession number can link them now."
+            }
+            ChainFinding::OrderUidReplacedDownstream => {
+                "The order announced a Study Instance UID, the worklist item carried it unchanged, \
+                 and the images carry another one. The replacement happened after the worklist: the \
+                 modality ignored the entry or the archive regenerated the UID. The RIS still holds \
+                 the announced UID and will not find these images by it."
+            }
+            ChainFinding::TruncatedAccessionBreaksLink => {
+                "The accession number is longer than the 16 characters DICOM allows, and the \
+                 worklist cut it. The images carry the cut value, the RIS holds the full one. The \
+                 working key of the whole workflow no longer matches; this is the silent failure a \
+                 lenient interface produces."
+            }
+            ChainFinding::TruncatedAccessionAndImageDiffers => {
+                "The accession number was cut to 16 characters on the way into the worklist, and \
+                 the images carry neither the full nor the cut value."
+            }
+            ChainFinding::Intact => {
+                "Every identifier present on all three hops agrees: what the RIS ordered is what \
+                 the modality was told and what the images carry."
+            }
+        }
+    }
+}
+
+/// The three hops side by side.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Chain {
+    pub rows: Vec<ChainRow>,
+    pub findings: Vec<ChainFinding>,
+}
+
+/// Follow each identifier from the order through the worklist item into
+/// the image. `worklist` is `None` when the item could not be built; the
+/// rows then show the order and the image only.
+pub fn resolve_chain(order: &Order, worklist: Option<&WorklistKeys>, study: &Study) -> Chain {
+    let row = |name, o: Option<&str>, w: Option<&Option<String>>, i: Option<&str>| ChainRow {
+        name,
+        order: clean(o),
+        worklist: w.and_then(|v| clean(v.as_deref())),
+        image: clean(i),
+    };
+    let rows = vec![
+        row(
+            "Study Instance UID",
+            order.study_uid.as_deref(),
+            worklist.map(|w| &w.study_uid),
+            study.study_uid.as_deref(),
+        ),
+        row(
+            "Accession Number",
+            order.accession.as_deref(),
+            worklist.map(|w| &w.accession),
+            study.accession_number.as_deref(),
+        ),
+        row(
+            "Patient ID",
+            order.patient_id.as_deref(),
+            worklist.map(|w| &w.patient_id),
+            study.patient_id.as_deref(),
+        ),
+        row(
+            "Requested Procedure ID",
+            order.procedure_id.as_deref(),
+            worklist.map(|w| &w.procedure_id),
+            study.requested_procedure_id.as_deref(),
+        ),
+    ];
+
+    let mut findings = Vec::new();
+    if let Some(w) = worklist {
+        let uid = &rows[0];
+        let acc = &rows[1];
+        if w.study_uid_generated {
+            match uid.worklist_to_image() {
+                Some(true) => findings.push(ChainFinding::GeneratedUidReachedImage),
+                Some(false) => findings.push(ChainFinding::GeneratedUidNotInImage),
+                None => {}
+            }
+        } else if uid.order_to_worklist() == Some(true) && uid.worklist_to_image() == Some(false) {
+            findings.push(ChainFinding::OrderUidReplacedDownstream);
+        }
+        if w.accession_truncated {
+            match acc.worklist_to_image() {
+                Some(true) => findings.push(ChainFinding::TruncatedAccessionBreaksLink),
+                Some(false) => findings.push(ChainFinding::TruncatedAccessionAndImageDiffers),
+                None => {}
+            }
+        }
+        let all_agree = rows
+            .iter()
+            .all(|r| r.order_to_worklist() != Some(false) && r.worklist_to_image() != Some(false));
+        if findings.is_empty() && all_agree {
+            findings.push(ChainFinding::Intact);
+        }
+    }
+    Chain { rows, findings }
+}
+
+#[cfg(test)]
+mod chain_tests {
+    use super::*;
+
+    fn study(uid: &str, acc: &str) -> Study {
+        Study {
+            study_uid: Some(uid.into()),
+            accession_number: Some(acc.into()),
+            patient_id: Some("P1".into()),
+            requested_procedure_id: Some("RP1".into()),
+            ..Study::default()
+        }
+    }
+    fn order(uid: Option<&str>, acc: &str) -> Order {
+        Order {
+            study_uid: uid.map(str::to_string),
+            accession: Some(acc.into()),
+            patient_id: Some("P1".into()),
+            procedure_id: Some("RP1".into()),
+            ..Order::default()
+        }
+    }
+    fn keys(uid: &str, generated: bool, acc: &str, truncated: bool) -> WorklistKeys {
+        WorklistKeys {
+            study_uid: Some(uid.into()),
+            study_uid_generated: generated,
+            accession: Some(acc.into()),
+            accession_truncated: truncated,
+            patient_id: Some("P1".into()),
+            procedure_id: Some("RP1".into()),
+        }
+    }
+
+    #[test]
+    fn intact_chain() {
+        let c = resolve_chain(
+            &order(Some("1.2"), "A1"),
+            Some(&keys("1.2", false, "A1", false)),
+            &study("1.2", "A1"),
+        );
+        assert_eq!(c.findings, [ChainFinding::Intact]);
+        assert!(c
+            .rows
+            .iter()
+            .all(|r| r.order_to_worklist() == Some(true) && r.worklist_to_image() == Some(true)));
+    }
+
+    #[test]
+    fn generated_uid_that_reached_the_image_is_not_intact() {
+        let c = resolve_chain(
+            &order(None, "A1"),
+            Some(&keys("2.25.9", true, "A1", false)),
+            &study("2.25.9", "A1"),
+        );
+        assert_eq!(c.findings, [ChainFinding::GeneratedUidReachedImage]);
+        assert_eq!(c.rows[0].order, None);
+        assert_eq!(c.rows[0].order_to_worklist(), None);
+        let c = resolve_chain(
+            &order(None, "A1"),
+            Some(&keys("2.25.9", true, "A1", false)),
+            &study("1.9", "A1"),
+        );
+        assert_eq!(c.findings, [ChainFinding::GeneratedUidNotInImage]);
+    }
+
+    #[test]
+    fn order_uid_replaced_downstream() {
+        let c = resolve_chain(
+            &order(Some("1.2"), "A1"),
+            Some(&keys("1.2", false, "A1", false)),
+            &study("1.3", "A1"),
+        );
+        assert_eq!(c.findings, [ChainFinding::OrderUidReplacedDownstream]);
+    }
+
+    #[test]
+    fn truncated_accession_breaks_the_link() {
+        let full = "ACC-2026-00000000001";
+        let cut = "ACC-2026-0000000";
+        let c = resolve_chain(
+            &order(Some("1.2"), full),
+            Some(&keys("1.2", false, cut, true)),
+            &study("1.2", cut),
+        );
+        assert_eq!(c.findings, [ChainFinding::TruncatedAccessionBreaksLink]);
+        assert_eq!(c.rows[1].order_to_worklist(), Some(false));
+        assert_eq!(c.rows[1].worklist_to_image(), Some(true));
+    }
+
+    #[test]
+    fn without_an_item_there_are_rows_but_no_findings() {
+        let c = resolve_chain(&order(Some("1.2"), "A1"), None, &study("1.2", "A1"));
+        assert!(c.findings.is_empty());
+        assert!(c.rows.iter().all(|r| r.worklist.is_none()));
+    }
+}

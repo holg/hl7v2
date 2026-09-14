@@ -143,7 +143,7 @@ pub fn FhirPanel(output: Signal<Option<Arc<FhirText>>>) -> impl IntoView {
     }
 }
 
-fn blob_url(bytes: &[u8], mime: &str) -> Option<String> {
+pub(crate) fn blob_url(bytes: &[u8], mime: &str) -> Option<String> {
     let array = js_sys::Uint8Array::from(bytes);
     let parts = js_sys::Array::new();
     parts.push(&array.buffer());

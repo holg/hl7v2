@@ -10,6 +10,7 @@ pub mod link_panel;
 pub mod series_panel;
 pub mod tag_tree;
 pub mod viewer;
+pub mod worklist_panel;
 
 pub use controls::WindowControls;
 pub use document_view::DocumentView;
@@ -19,3 +20,4 @@ pub use hl7_view::Hl7View;
 pub use link_panel::LinkPanel;
 pub use series_panel::SeriesPanel;
 pub use tag_tree::TagTree;
+pub use worklist_panel::WorklistPanel;

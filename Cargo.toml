@@ -1,7 +1,9 @@
 [workspace]
 resolver = "2"
-members = ["crates/hl7kit", "demo/dicomscope"]
-default-members = ["crates/hl7kit"]
+members = ["crates/hl7kit", "crates/mwlkit", "demo/dicomscope"]
+default-members = ["crates/hl7kit", "crates/mwlkit"]
+# A sibling project may be cloned under demo/ for study; it is not part of this workspace.
+exclude = ["demo/DICOM-RST"]
 
 [workspace.package]
 edition = "2021"

@@ -1,24 +1,27 @@
 name: publish
 
-# Publishes the `hl7kit` library to crates.io when a version tag is pushed:
+# Publishes one library crate to crates.io when its version tag is pushed:
 #
-#   git tag v0.1.0 && git push origin v0.1.0
+#   git tag hl7kit-v0.3.0 && git push origin hl7kit-v0.3.0
+#   git tag mwlkit-v0.1.0 && git push origin mwlkit-v0.1.0
 #
-# The tag must equal the version in crates/hl7kit/Cargo.toml. The demo crate is
-# `publish = false` and never goes anywhere.
+# The version in the tag must equal the version in the crate's Cargo.toml.
+# A bare `v*` tag still means hl7kit, for the tags that already exist. The
+# demo crate is `publish = false` and never goes anywhere.
 #
 # Authentication, in order of preference:
 #   1. crates.io Trusted Publishing (OIDC, no secret): on crates.io open the
 #      crate's Settings > Trusted Publishing and add repository `holg/hl7v2`,
 #      workflow `publish.yml`. Available once the crate exists.
 #   2. A `CARGO_REGISTRY_TOKEN` repository secret, needed for the very first
-#      publish or when Trusted Publishing is not set up.
+#      publish of a crate or when Trusted Publishing is not set up.
 #
-# `workflow_dispatch` runs everything except the upload, as a rehearsal.
+# `workflow_dispatch` tests and packages both crates without uploading, as a
+# rehearsal.
 
 on:
   push:
-    tags: ["v*"]
+    tags: ["v*", "hl7kit-v*", "mwlkit-v*"]
   workflow_dispatch:
 
 permissions:
@@ -32,21 +35,31 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
 
-      - name: Tag matches crate version
-        if: github.event_name == 'push'
+      - name: Which crate, and does the tag match its version
         run: |
-          version=$(cargo metadata --no-deps --format-version 1 \
-            | jq -r '.packages[] | select(.name == "hl7kit") | .version')
-          if [ "${GITHUB_REF_NAME#v}" != "$version" ]; then
-            echo "tag $GITHUB_REF_NAME does not match crates/hl7kit version $version"
-            exit 1
+          case "$GITHUB_REF_NAME" in
+            hl7kit-v*) crate=hl7kit; tag_version="${GITHUB_REF_NAME#hl7kit-v}" ;;
+            mwlkit-v*) crate=mwlkit; tag_version="${GITHUB_REF_NAME#mwlkit-v}" ;;
+            v*)        crate=hl7kit; tag_version="${GITHUB_REF_NAME#v}" ;;
+            *)         crate="hl7kit mwlkit"; tag_version="" ;;
+          esac
+          if [ "${{ github.event_name }}" = "push" ]; then
+            version=$(cargo metadata --no-deps --format-version 1 \
+              | jq -r --arg c "$crate" '.packages[] | select(.name == $c) | .version')
+            if [ "$tag_version" != "$version" ]; then
+              echo "tag $GITHUB_REF_NAME does not match crates/$crate version $version"
+              exit 1
+            fi
           fi
+          echo "CRATES=$crate" >> "$GITHUB_ENV"
 
       - name: Test
-        run: cargo test -p hl7kit --locked
+        run: |
+          for c in $CRATES; do cargo test -p "$c" --locked; done
 
-      - name: Package (verifies the crate builds from its own contents)
-        run: cargo package -p hl7kit --locked
+      - name: Package (verifies each crate builds from its own contents)
+        run: |
+          for c in $CRATES; do cargo package -p "$c" --locked; done
 
       - name: Trusted Publishing token
         id: auth
@@ -63,8 +76,8 @@ jobs:
             echo "no crates.io credentials: set up Trusted Publishing or the CARGO_REGISTRY_TOKEN secret"
             exit 1
           fi
-          cargo publish -p hl7kit --locked
+          cargo publish -p "$CRATES" --locked
 
       - name: Rehearsal summary
         if: github.event_name == 'workflow_dispatch'
-        run: echo "package built; push a v* tag to publish"
+        run: echo "packages built for $CRATES; push a hl7kit-v* or mwlkit-v* tag to publish"

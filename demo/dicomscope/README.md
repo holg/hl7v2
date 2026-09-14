@@ -189,6 +189,33 @@ output and its OperationOutcome at <https://holg.github.io/hl7v2/fhir/>, so
 the claim above can be checked against the current commit rather than
 against this paragraph.
 
+## Modality Worklist
+
+The order alone is also turned into the DICOM Modality Worklist item a
+RIS would have offered the modality, with the [`mwlkit`](../../crates/mwlkit)
+crate (PS3.4 Table K.6-1, mapped per IHE RAD-4). The panel shows where the
+Study Instance UID came from, every decision the mapping had to make
+(defaulted station AE title, translated OBR-24 modality code, reordered
+name components, truncated values, generated UID), the data set as a tag
+tree, and a download of the item as a Part 10 file (`order.mwl.dcm`).
+
+With a study loaded as well, the chain view follows each identifier through
+the three hops, order → worklist item → image, and names what it finds:
+
+* **Generated UID reached the image**: the order carried no UID, the worklist
+  generated one, the images carry it. The link holds, but the RIS never learned
+  the UID and can find the study only by accession number.
+* **Order UID replaced downstream**: the order and the worklist agree, the
+  images differ. The modality ignored the entry or the archive re-keyed it.
+* **Truncated accession number breaks the RIS link**: the accession was longer
+  than the 16 characters SH allows and was cut on the way in; the images carry
+  the cut value, the RIS the full one. The demo opts into truncation so this
+  case is visible; the crate's default refuses the order instead.
+
+The CLI produces the variants: `dicomscope order study.zip --omi --steps 2`,
+`--no-uid`, or `--accession ACC-2026-00000000001` for the truncation case; it
+reports the worklist item it built, or why it was refused, on stderr.
+
 ## Supported transfer syntaxes
 
 Pixel decoding is dicom-rs (`dicom-pixeldata` with the `native`, `jpeg`, `rle`
@@ -283,12 +310,13 @@ Measured with `trunk build --release` (opt-level `z`, LTO, `wasm-opt -Oz`):
 | File | Raw | Gzipped |
 | --- | --- | --- |
 | `wasm-bindgen loader` | 72 KB | 12 KB |
-| `wasm` | 1520 KB | 640 KB |
+| `wasm` | 1835 KB | 795 KB |
 
-Total over the wire: **652 KB gzipped** (Rust 1.96, wgpu 30.0.1, leptos 0.8.20,
-dicom-rs 0.10.0, zip 7.2, serde_json 1, 2026-09-09). The first cut of the
-viewer alone was 476 KB; series scanning, zip, colour, measurements,
-documents and the FHIR output added the rest.
+Total over the wire: **807 KB gzipped** (Rust 1.96, wgpu 30.0.1, leptos 0.8.20,
+dicom-rs 0.10.0, zip 7.2, serde_json 1, mwlkit 0.1.0, 2026-09-14). The first
+cut of the viewer alone was 476 KB; series scanning, zip, colour, measurements,
+documents and the FHIR output brought it to 652 KB; the worklist item, which
+pulls in the DICOM data set writer, added the rest.
 
 ## The no-network guarantee, and how to verify it
 

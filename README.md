@@ -81,7 +81,8 @@ all indices one-based. `PID.3.1` is accepted as an alias for `PID-3.1`.
 
 | Path | What |
 | --- | --- |
-| `crates/hl7kit` | The library. `cargo test -p hl7kit` |
+| `crates/hl7kit` | The parser library. `cargo test -p hl7kit` |
+| `crates/mwlkit` | HL7 order to DICOM Modality Worklist item, on top of `hl7kit` and dicom-rs. See its [README](crates/mwlkit/README.md) |
 | `demo/dicomscope` | Browser demo: Leptos + wgpu + dicom-rs, no JavaScript. See its [README](demo/dicomscope/README.md) |
 | `samples/` | Fixture HL7 messages used by the tests and the demo |
 
@@ -115,11 +116,13 @@ which is how the sample messages in `samples/` are produced.
 
 ## Releasing
 
-The library is published to crates.io by `.github/workflows/publish.yml`
-when a `v*` tag is pushed whose version equals `crates/hl7kit/Cargo.toml`:
+Each library crate is published to crates.io by `.github/workflows/publish.yml`
+when a tag named after the crate is pushed whose version equals the crate's
+`Cargo.toml` (a bare `v*` tag still means `hl7kit`):
 
 ```sh
-git tag v0.1.0 && git push origin v0.1.0
+git tag hl7kit-v0.3.0 && git push origin hl7kit-v0.3.0
+git tag mwlkit-v0.1.0 && git push origin mwlkit-v0.1.0
 ```
 
 The workflow tests, packages and uploads. Credentials come from crates.io

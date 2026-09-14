@@ -20,7 +20,9 @@ use crate::ui::file_drop::FilesResult;
 use crate::ui::viewer::{sync_backing_size, Tool, ViewControls, Viewport};
 use crate::ui::{
     DocumentView, FhirPanel, FileDrop, Hl7View, LinkPanel, SeriesPanel, TagTree, WindowControls,
+    WorklistPanel,
 };
+use crate::worklist::{self, WorklistOutput};
 use hl7kit::order::{Order, OrderField};
 use hl7kit::{Message, Span};
 use leptos::html;
@@ -470,6 +472,26 @@ pub fn App() -> impl IntoView {
         Some(link::resolve(&d.study, &h.order))
     });
 
+    // The worklist item needs the order alone; the chain needs the study too.
+    let worklist_output = Memo::new(move |_| -> Option<Result<Arc<WorklistOutput>, String>> {
+        let h = hl7_state.get()?;
+        let msg = Message::parse(h.raw.as_str()).ok()?;
+        Some(
+            worklist::build(&msg, &h.order)
+                .map(Arc::new)
+                .map_err(|e| e.to_string()),
+        )
+    });
+    let chain = Memo::new(move |_| -> Option<link::Chain> {
+        let d = dicom_state.get()?;
+        let h = hl7_state.get()?;
+        let keys = worklist_output
+            .get()
+            .and_then(|r| r.ok())
+            .map(|o| link::WorklistKeys::from_item(&o.item));
+        Some(link::resolve_chain(&h.order, keys.as_ref(), &d.study))
+    });
+
     // FHIR R4 bundle for the pair. Rebuilt on any change of study, order or
     // linkage; generation is a few allocations, so no debouncing.
     let fhir_output = Memo::new(move |_| -> Option<Arc<FhirText>> {
@@ -778,6 +800,9 @@ pub fn App() -> impl IntoView {
                     <LinkPanel linkage=Signal::derive(move || linkage.get())
                         order=Signal::derive(move || hl7_state.get().map(|h| h.order.clone()))
                         patient_authority=patient_authority />
+                    <h2>"Modality Worklist"</h2>
+                    <WorklistPanel output=Signal::derive(move || worklist_output.get())
+                        chain=Signal::derive(move || chain.get()) />
                     <h2>"FHIR R4"</h2>
                     <FhirPanel output=Signal::derive(move || fhir_output.get()) />
                 </section>
