@@ -62,12 +62,27 @@ jobs:
 
       - name: Validate
         run: |
-          set +e
-          java -jar validator_cli.jar out/fhir/bundle-orm.json out/fhir/bundle-omi.json out/fhir/bundle-mismatch.json \
-            -version "$FHIR_VERSION" -ig "$MII_PACKAGE" \
-            -output out/fhir/validation.json > out/fhir/validation.txt 2>&1
-          status=$?
-          set -e
+          run_validator() {
+            java -jar validator_cli.jar out/fhir/bundle-orm.json out/fhir/bundle-omi.json out/fhir/bundle-mismatch.json \
+              -version "$FHIR_VERSION" -ig "$MII_PACKAGE" \
+              -output out/fhir/validation.json "$@" > out/fhir/validation.txt 2>&1
+          }
+          tx_down() { grep -qE "TerminologyServiceException|capability statement: timeout" out/fhir/validation.txt; }
+          # tx.fhir.org, the validator's terminology server, times out now and
+          # then. Retry, then validate without it rather than fail the build on
+          # an outage that is not ours; the report says when that happened.
+          status=1
+          for attempt in 1 2 3; do
+            set +e; run_validator; status=$?; set -e
+            if [ "$status" -eq 0 ] || ! tx_down; then break; fi
+            echo "terminology server unreachable (attempt $attempt), retrying"; sleep 30
+          done
+          : > out/fhir/tx-note.txt
+          if [ "$status" -ne 0 ] && tx_down; then
+            echo "terminology server still unreachable; validating with -tx n/a"
+            set +e; run_validator -tx n/a; status=$?; set -e
+            echo "The terminology server tx.fhir.org was unreachable during this run, so the bundles were validated with -tx n/a: structure and profiles, no code validation." > out/fhir/tx-note.txt
+          fi
           grep -E 'Validate |errors,' out/fhir/validation.txt || true
           if [ "$status" -ne 0 ]; then
             echo "validator reported errors"; tail -60 out/fhir/validation.txt; exit 1
@@ -90,6 +105,9 @@ jobs:
           if echo "$summary" | grep -qE '[1-9][0-9]* (error|fatal)'; then
             echo "OperationOutcome contains errors"; exit 1
           fi
+          tx_note=$(cat out/fhir/tx-note.txt)
+          tx_html=""
+          if [ -n "$tx_note" ]; then tx_html="<p><strong>Note:</strong> $tx_note</p>"; fi
           cat > out/fhir/index.html <<EOF
           <!doctype html><meta charset="utf-8"><title>dicomscope FHIR reference bundles</title>
           <style>body{font:14px/1.5 system-ui,sans-serif;max-width:60rem;margin:2rem auto;padding:0 1rem}pre{background:#f4f4f4;padding:.5rem;overflow:auto}</style>
@@ -105,6 +123,7 @@ jobs:
           </ul>
           <h2>Result</h2>
           <pre>${summary}</pre>
+          ${tx_html}
           <p>Remaining warnings are documented in the <a href="https://github.com/holg/hl7v2/blob/main/demo/dicomscope/README.md#validation">demo README</a>:
           missing narrative (best practice), a code without a URI system, and DICOM value sets the validator cannot fetch.</p>
           <p><a href="../">Back to the demo</a></p>
