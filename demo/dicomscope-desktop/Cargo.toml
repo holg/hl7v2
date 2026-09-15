@@ -1,0 +1,21 @@
+[package]
+name = "dicomscope-desktop"
+version = "0.1.0"
+description = "Native dicomscope: the same viewer and HL7 order linkage as the browser demo, as a single binary on Vulkan, Metal, DX12 or OpenGL"
+publish = false
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "dicomscope-desktop"
+path = "src/main.rs"
+
+[dependencies]
+dicomscope-core = { path = "../dicomscope-core" }
+hl7kit = { path = "../../crates/hl7kit" }
+# Native backends only; no WebGPU anywhere on the desktop.
+wgpu = { version = "30.0.1", default-features = false, features = ["std", "wgsl", "vulkan", "metal", "dx12", "gles"] }
+winit = "0.30.13"
+pollster = "0.4"

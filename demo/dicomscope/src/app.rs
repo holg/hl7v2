@@ -5,15 +5,7 @@
 //! The loaded study set (archives and directly read files) lives in an `Arc`
 //! inside a signal; slices and documents are decoded from it on demand.
 
-use crate::dicom::pixels::FrameInfo;
-use crate::dicom::sr::{self, DocumentKind};
-use crate::dicom::{self, FileEntry, Study, StudySet, TagRow};
-use crate::error::AppError;
-use crate::fhir::{self, FhirInput};
-use crate::link::{self, Linkage};
-use crate::measure::Measurement;
 use crate::render::{Renderer, Uniforms};
-use crate::thumbnail::{thumbnail, Thumbnail};
 use crate::ui::document_view::DocumentContent;
 use crate::ui::fhir_panel::FhirText;
 use crate::ui::file_drop::FilesResult;
@@ -22,7 +14,15 @@ use crate::ui::{
     DocumentView, FhirPanel, FileDrop, Hl7View, LinkPanel, SeriesPanel, TagTree, WindowControls,
     WorklistPanel,
 };
-use crate::worklist::{self, WorklistOutput};
+use dicomscope_core::dicom::pixels::FrameInfo;
+use dicomscope_core::dicom::sr::{self, DocumentKind};
+use dicomscope_core::dicom::{self, FileEntry, Study, StudySet, TagRow};
+use dicomscope_core::error::AppError;
+use dicomscope_core::fhir::{self, FhirInput};
+use dicomscope_core::link::{self, Linkage};
+use dicomscope_core::measure::Measurement;
+use dicomscope_core::thumbnail::{thumbnail, Thumbnail};
+use dicomscope_core::worklist::{self, WorklistOutput};
 use hl7kit::order::{Order, OrderField};
 use hl7kit::{Message, Span};
 use leptos::html;
@@ -149,7 +149,7 @@ pub fn App() -> impl IntoView {
         started.set_value(true);
         sync_backing_size(&canvas);
         spawn_local(async move {
-            match Renderer::new(canvas).await {
+            match crate::render::for_canvas(canvas).await {
                 Ok(mut r) => {
                     if let Some(frame) = pending.with_value(|p| p.borrow_mut().take()) {
                         r.upload(&frame);

@@ -1,0 +1,28 @@
+[package]
+name = "dicomscope-core"
+version = "0.1.0"
+description = "Domain code shared by the dicomscope browser and desktop apps: DICOM loading, HL7 order linkage, FHIR output, worklist items, wgpu rendering"
+publish = false
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+hl7kit = { path = "../../crates/hl7kit" }
+mwlkit = { path = "../../crates/mwlkit" }
+dicom-core = "0.10.0"
+dicom-dictionary-std = "0.10.0"
+dicom-object = "0.10.0"
+dicom-encoding = "0.10.0"
+dicom-transfer-syntax-registry = "0.10.0"
+dicom-pixeldata = { version = "0.10.0", default-features = false, features = ["jpeg", "native", "rle", "deflate"] }
+bytemuck = { version = "1.25.2", features = ["derive"] }
+# FHIR output is built as serde_json::Value; no typed FHIR crate (see the demo README).
+serde_json = { version = "1", features = ["preserve_order"] }
+zip = { version = "7.2.0", default-features = false, features = ["deflate"] }
+# Backends are chosen by the app: `webgpu` in the browser, native ones on the desktop.
+wgpu = { version = "30.0.1", default-features = false, features = ["std", "wgsl"] }
+
+[dev-dependencies]
+naga = { version = "30.0.1", features = ["wgsl-in"] }

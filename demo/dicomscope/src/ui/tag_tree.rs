@@ -1,6 +1,6 @@
 //! Scrollable, filterable list of every data element.
 
-use crate::dicom::TagRow;
+use dicomscope_core::dicom::TagRow;
 use leptos::prelude::*;
 use std::sync::Arc;
 

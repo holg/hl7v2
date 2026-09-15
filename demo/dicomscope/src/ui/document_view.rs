@@ -1,7 +1,7 @@
 //! A Structured Report as an indented tree, or an Encapsulated PDF in the
 //! browser's own PDF viewer through a blob URL (no network, no plugin).
 
-use crate::dicom::sr::SrLine;
+use dicomscope_core::dicom::sr::SrLine;
 use leptos::prelude::*;
 use leptos::web_sys::{Blob, BlobPropertyBag, Url};
 use std::sync::Arc;
@@ -37,7 +37,7 @@ pub fn DocumentView(content: Signal<Option<DocumentContent>>) -> impl IntoView {
                 Some(DocumentContent::Failed(e)) => Some(view! { <p class="banner danger">{e}</p> }.into_any()),
                 Some(DocumentContent::Report { title, lines }) => Some(view! {
                     <h3>{title}</h3>
-                    <pre>{crate::dicom::sr::sr_to_text(&lines)}</pre>
+                    <pre>{dicomscope_core::dicom::sr::sr_to_text(&lines)}</pre>
                 }.into_any()),
                 Some(DocumentContent::Pdf { title, bytes, mime }) => {
                     if let Some(old) = last_url.get_value() {

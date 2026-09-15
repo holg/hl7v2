@@ -216,6 +216,27 @@ The CLI produces the variants: `dicomscope order study.zip --omi --steps 2`,
 `--no-uid`, or `--accession ACC-2026-00000000001` for the truncation case; it
 reports the worklist item it built, or why it was refused, on stderr.
 
+## Desktop build
+
+The same code runs as a native binary: `demo/dicomscope-desktop` is a winit
+window with a wgpu surface on Vulkan, Metal, DX12 or OpenGL, no WebGPU and no
+webview anywhere, so it runs on Linux LTS machines where WebGPU is not an
+option. Everything below the UI (loading, series, decoding, linkage, FHIR,
+worklist, the shader and the view geometry) lives in `demo/dicomscope-core`
+and is shared byte for byte; the browser crate and the desktop crate only
+create the surface and handle input.
+
+```sh
+cargo run --release -p dicomscope-desktop -- samples/anonymized-demo-clean.zip
+```
+
+Wheel or Up/Down scroll slices, PageUp/PageDown switch series, Ctrl+wheel or
++/- zoom, drag pans, right-drag windows, 0 fits, 1 is 1:1, r/R rotate, h/v
+flip, i toggles interpolation, w resets the window. `WGPU_BACKEND=gl` forces
+OpenGL on a machine without a working Vulkan driver. The side panels (series,
+tags, HL7, linkage, worklist, FHIR) are the next step and will use egui over
+the same core.
+
 ## Supported transfer syntaxes
 
 Pixel decoding is dicom-rs (`dicom-pixeldata` with the `native`, `jpeg`, `rle`

@@ -5,7 +5,7 @@
 //! not, because reading directory entries from a drop needs the
 //! non-standard `webkitGetAsEntry` API and is left out on purpose.
 
-use crate::error::AppError;
+use dicomscope_core::error::AppError;
 use leptos::prelude::*;
 use leptos::task::spawn_local;
 use leptos::web_sys::{DragEvent, Event, File, FileList, HtmlInputElement};

@@ -83,7 +83,9 @@ all indices one-based. `PID.3.1` is accepted as an alias for `PID-3.1`.
 | --- | --- |
 | `crates/hl7kit` | The parser library. `cargo test -p hl7kit` |
 | `crates/mwlkit` | HL7 order to DICOM Modality Worklist item, on top of `hl7kit` and dicom-rs. See its [README](crates/mwlkit/README.md) |
-| `demo/dicomscope` | Browser demo: Leptos + wgpu + dicom-rs, no JavaScript. See its [README](demo/dicomscope/README.md) |
+| `demo/dicomscope-core` | Everything the viewer does that is not UI: DICOM loading, series, linkage, FHIR, worklist, wgpu renderer. Tested on the host |
+| `demo/dicomscope` | Browser demo: Leptos + WebGPU over the core, no JavaScript. See its [README](demo/dicomscope/README.md) |
+| `demo/dicomscope-desktop` | Native viewer: winit + wgpu on Vulkan, Metal, DX12 or OpenGL over the same core. `cargo run --release -p dicomscope-desktop -- study.zip` |
 | `samples/` | Fixture HL7 messages used by the tests and the demo |
 
 ```sh

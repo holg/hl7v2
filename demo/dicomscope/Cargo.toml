@@ -8,25 +8,16 @@ license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 
-# Host-buildable domain dependencies. `cargo test -p dicomscope` on the host
-# compiles only these, so the DICOM and linkage modules stay testable without
-# a browser.
+# The domain code lives in dicomscope-core and is shared with the desktop app.
+# On the host this crate is the command-line companion (check, order, pack,
+# fhir); in the browser it is the Leptos app.
 [dependencies]
+dicomscope-core = { path = "../dicomscope-core" }
 hl7kit = { path = "../../crates/hl7kit" }
 mwlkit = { path = "../../crates/mwlkit" }
-dicom-core = "0.10.0"
 dicom-dictionary-std = "0.10.0"
-dicom-object = "0.10.0"
-dicom-encoding = "0.10.0"
-dicom-transfer-syntax-registry = "0.10.0"
-dicom-pixeldata = { version = "0.10.0", default-features = false, features = ["jpeg", "native", "rle", "deflate"] }
-bytemuck = { version = "1.25.2", features = ["derive"] }
-# FHIR output is built as serde_json::Value; no typed FHIR crate (see README).
 serde_json = { version = "1", features = ["preserve_order"] }
 zip = { version = "7.2.0", default-features = false, features = ["deflate"] }
-
-[dev-dependencies]
-naga = { version = "30.0.1", features = ["wgsl-in"] }
 
 # Browser-only dependencies. Nothing here is compiled for the host target.
 [target.'cfg(target_arch = "wasm32")'.dependencies]

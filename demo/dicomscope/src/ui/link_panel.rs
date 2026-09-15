@@ -3,8 +3,8 @@
 //! IPC study UIDs, and an unlinked study whose ImagingStudy carries no
 //! `basedOn`.
 
-use crate::fhir::fhir_element;
-use crate::link::{LinkPath, Linkage, Pair};
+use dicomscope_core::fhir::fhir_element;
+use dicomscope_core::link::{LinkPath, Linkage, Pair};
 use hl7kit::order::{Order, OrderField};
 use leptos::prelude::*;
 
@@ -70,8 +70,8 @@ pub fn LinkPanel(
                         {l.key_conflict().map(|k| view! {
                             <p class="banner danger">
                                 <strong>{match k {
-                                    crate::link::KeyConflict::AccessionDiffers => "Keys disagree: accession number differs on a UID-linked study. ",
-                                    crate::link::KeyConflict::StudyUidDiffers => "Keys disagree: study UID differs on an accession-linked study. ",
+                                    dicomscope_core::link::KeyConflict::AccessionDiffers => "Keys disagree: accession number differs on a UID-linked study. ",
+                                    dicomscope_core::link::KeyConflict::StudyUidDiffers => "Keys disagree: study UID differs on an accession-linked study. ",
                                 }}</strong>
                                 {k.explanation()}
                             </p>

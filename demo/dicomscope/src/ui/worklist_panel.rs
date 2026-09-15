@@ -3,10 +3,10 @@
 //! the chain order → worklist → image, the data set itself, and a download
 //! of the Part 10 file. Built locally; the blob URL never leaves the page.
 
-use crate::link::{Chain, ChainFinding, ChainRow};
 use crate::ui::fhir_panel::blob_url;
 use crate::ui::TagTree;
-use crate::worklist::WorklistOutput;
+use dicomscope_core::link::{Chain, ChainFinding, ChainRow};
+use dicomscope_core::worklist::WorklistOutput;
 use leptos::prelude::*;
 use leptos::web_sys::Url;
 use mwlkit::StudyUidOrigin;

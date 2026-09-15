@@ -1,12 +1,12 @@
 //! Keyboard, mouse and wheel handling for the canvas. The arithmetic is in
-//! [`crate::view::Viewport`] and [`crate::measure`], both tested on the
+//! [`dicomscope_core::view::Viewport`] and [`dicomscope_core::measure`], both tested on the
 //! host; [`ViewControls`] only translates events into calls on them.
 
-use crate::measure::{Measurement, Point};
+use dicomscope_core::measure::{Measurement, Point};
 use leptos::prelude::*;
 use leptos::web_sys::{HtmlCanvasElement, KeyboardEvent, MouseEvent, WheelEvent};
 
-pub use crate::view::Viewport;
+pub use dicomscope_core::view::Viewport;
 
 /// What a mouse drag on the canvas does.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -280,7 +280,7 @@ impl ViewControls {
                 let b = self.source_point(canvas, ev).unwrap_or(draft.points[1]);
                 // Ignore clicks; a length needs a drag of a few pixels.
                 let scale = self.view.get_untracked().scale.max(1e-3);
-                if crate::measure::length_px(a, b) * scale >= 3.0 {
+                if dicomscope_core::measure::length_px(a, b) * scale >= 3.0 {
                     self.measurements
                         .update(|ms| ms.push(Measurement::Length { a, b }));
                 }

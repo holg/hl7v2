@@ -1,9 +1,9 @@
-//! wgpu rendering. Browser only, except the shader validation test below.
+//! wgpu rendering. The renderer is target-independent: the app creates the
+//! instance and the surface (a canvas in the browser, a window on the
+//! desktop) and hands them over.
 
-#[cfg(target_arch = "wasm32")]
 pub mod gpu;
 
-#[cfg(target_arch = "wasm32")]
 pub use gpu::{Renderer, Uniforms};
 
 /// The WGSL source, kept here so the host test and the renderer share it.

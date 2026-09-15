@@ -60,16 +60,15 @@ pub struct Renderer {
 }
 
 impl Renderer {
-    /// Acquire an adapter and device for the canvas. Fails with
-    /// `AppError::NoWebGpu` when the browser has no WebGPU adapter.
-    pub async fn new(canvas: web_sys::HtmlCanvasElement) -> Result<Renderer, AppError> {
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::BROWSER_WEBGPU,
-            ..wgpu::InstanceDescriptor::new_without_display_handle()
-        });
-        let surface = instance
-            .create_surface(wgpu::SurfaceTarget::Canvas(canvas.clone()))
-            .map_err(|e| AppError::Gpu(format!("cannot create a surface for the canvas: {e}")))?;
+    /// Acquire an adapter and device for a surface the app created. Fails
+    /// with `AppError::NoWebGpu` when the instance has no adapter for it.
+    /// `width` and `height` are the initial surface size in device pixels.
+    pub async fn new(
+        instance: &wgpu::Instance,
+        surface: wgpu::Surface<'static>,
+        width: u32,
+        height: u32,
+    ) -> Result<Renderer, AppError> {
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {
                 compatible_surface: Some(&surface),
@@ -90,7 +89,7 @@ impl Renderer {
             .map_err(|e| AppError::Gpu(format!("device request failed: {e}")))?;
 
         let mut config = surface
-            .get_default_config(&adapter, canvas.width().max(1), canvas.height().max(1))
+            .get_default_config(&adapter, width.max(1), height.max(1))
             .ok_or_else(|| AppError::Gpu("surface has no supported texture format".into()))?;
         config.present_mode = wgpu::PresentMode::Fifo;
         surface.configure(&device, &config);

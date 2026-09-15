@@ -1,8 +1,8 @@
 //! Series picker with thumbnails, slice slider, document list, and the list
 //! of files that were skipped.
 
-use crate::dicom::StudySet;
-use crate::thumbnail::Thumbnail;
+use dicomscope_core::dicom::StudySet;
+use dicomscope_core::thumbnail::Thumbnail;
 use leptos::prelude::*;
 use leptos::web_sys::{CanvasRenderingContext2d, ImageData};
 use std::sync::Arc;

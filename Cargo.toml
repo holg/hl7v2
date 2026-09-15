@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/hl7kit", "crates/mwlkit", "demo/dicomscope"]
+members = ["crates/hl7kit", "crates/mwlkit", "demo/dicomscope-core", "demo/dicomscope", "demo/dicomscope-desktop"]
 default-members = ["crates/hl7kit", "crates/mwlkit"]
 # A sibling project may be cloned under demo/ for study; it is not part of this workspace.
 exclude = ["demo/DICOM-RST"]
