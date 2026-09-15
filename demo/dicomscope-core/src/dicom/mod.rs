@@ -240,11 +240,12 @@ mod tests {
     }
 }
 
-/// In-memory Part 10 files for tests. Public behind the `test-support`
-/// feature so the apps' tests can build a study without a sample on disk.
 #[cfg(any(test, feature = "test-support"))]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 pub mod testutil {
     //! Build Part 10 files in memory so the whole DICOM path runs on the host.
+    //! Public behind the `test-support` feature so the apps' tests can build a
+    //! study without a sample on disk. Test code: `unwrap` is allowed here.
 
     use dicom_core::{DataElement, PrimitiveValue, VR};
     use dicom_dictionary_std::tags;
