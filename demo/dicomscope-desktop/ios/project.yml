@@ -31,7 +31,32 @@ targets:
         # The app's Documents folder shows up in Finder and the Files app:
         # that is how studies and orders get onto the iPad.
         UIFileSharingEnabled: true
-        LSSupportsOpeningDocumentsInPlace: true
+        # Not in place: "Open in dicomscope" then copies the file into
+        # Documents/Inbox, which the app scans when it comes to the front.
+        LSSupportsOpeningDocumentsInPlace: false
+        CFBundleDocumentTypes:
+          - CFBundleTypeName: HL7 v2 message
+            LSHandlerRank: Alternate
+            LSItemContentTypes: [eu.iesna.hl7]
+          - CFBundleTypeName: DICOM instance
+            LSHandlerRank: Alternate
+            LSItemContentTypes: [eu.iesna.dicom]
+          - CFBundleTypeName: DICOM study archive
+            LSHandlerRank: Alternate
+            LSItemContentTypes: [public.zip-archive]
+        UTImportedTypeDeclarations:
+          - UTTypeIdentifier: eu.iesna.hl7
+            UTTypeDescription: HL7 v2 message
+            UTTypeConformsTo: [public.plain-text]
+            UTTypeTagSpecification:
+              public.filename-extension: [hl7]
+              public.mime-type: [x-application/hl7-v2+er7]
+          - UTTypeIdentifier: eu.iesna.dicom
+            UTTypeDescription: DICOM instance
+            UTTypeConformsTo: [public.data]
+            UTTypeTagSpecification:
+              public.filename-extension: [dcm, dicom]
+              public.mime-type: [application/dicom]
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationLandscapeLeft
           - UIInterfaceOrientationLandscapeRight

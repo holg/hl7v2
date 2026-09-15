@@ -40,6 +40,7 @@ pub fn run(paths: Vec<String>) {
         session,
         gpu: None,
         ui,
+        known: paths.into_iter().collect(),
     };
     if let Err(e) = event_loop.run_app(&mut app) {
         eprintln!("event loop failed: {e}");
@@ -60,6 +61,9 @@ struct App {
     session: Session,
     gpu: Option<Gpu>,
     ui: UiState,
+    /// Paths already opened from the platform's document folders, so a
+    /// rescan on foreground opens only what is new.
+    known: std::collections::HashSet<String>,
 }
 
 impl App {
@@ -221,6 +225,12 @@ impl App {
 
         // File dialogs after the frame, so the UI that asked is on screen.
         self.run_actions(&actions);
+        let picked = platform::take_picked();
+        if !picked.is_empty() {
+            self.session.open_paths(&picked);
+            self.ui.thumb_textures.clear();
+            self.known.extend(picked);
+        }
 
         if output
             .viewport_output
@@ -245,6 +255,11 @@ impl App {
         } else {
             None
         };
+        if let Some(p) = &actions.open_entry {
+            self.session.open_paths(std::slice::from_ref(p));
+            self.ui.thumb_textures.clear();
+            self.known.insert(p.clone());
+        }
         if actions.reload {
             let paths = platform::initial_paths();
             if paths.is_empty() {
@@ -252,6 +267,7 @@ impl App {
             } else {
                 self.session.open_paths(&paths);
                 self.ui.thumb_textures.clear();
+                self.known.extend(paths);
             }
         }
         if let Some(p) = picked {
@@ -322,6 +338,20 @@ impl App {
 impl ApplicationHandler for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if self.gpu.is_some() {
+            // Back in the foreground (iOS): "Open in dicomscope" from another
+            // app has put a copy into Documents/Inbox by now.
+            let fresh: Vec<String> = platform::initial_paths()
+                .into_iter()
+                .filter(|p| !self.known.contains(p))
+                .collect();
+            if !fresh.is_empty() {
+                self.session.open_paths(&fresh);
+                self.ui.thumb_textures.clear();
+                self.known.extend(fresh);
+            }
+            if let Some(gpu) = &self.gpu {
+                gpu.window.request_redraw();
+            }
             return;
         }
         match self.create(event_loop) {
@@ -330,6 +360,21 @@ impl ApplicationHandler for App {
                 eprintln!("{e}");
                 event_loop.exit();
             }
+        }
+    }
+
+    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        // The document picker hands its result to a delegate outside our
+        // events; a short wake-up on iOS picks it up without a touch.
+        if cfg!(target_os = "ios") {
+            if platform::has_picked() {
+                if let Some(gpu) = &self.gpu {
+                    gpu.window.request_redraw();
+                }
+            }
+            event_loop.set_control_flow(ControlFlow::wait_duration(
+                std::time::Duration::from_millis(300),
+            ));
         }
     }
 

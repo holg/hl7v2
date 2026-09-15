@@ -36,6 +36,12 @@ open = "5"
 
 [target.'cfg(target_os = "ios")'.dependencies]
 egui-winit = { version = "0.36.2", default-features = false }
+# UIKit document picker.
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSArray", "NSString", "NSURL", "NSObject", "NSError"] }
+objc2-ui-kit = { version = "0.3", default-features = false, features = ["std", "block2", "objc2-uniform-type-identifiers", "UIApplication", "UIWindow", "UIViewController", "UIDocumentPickerViewController", "UIResponder", "UIView"] }
+block2 = "0.6"
+objc2-uniform-type-identifiers = { version = "0.3", default-features = false, features = ["std", "UTType"] }
 
 [dev-dependencies]
 dicomscope-core = { path = "../dicomscope-core", features = ["test-support"] }

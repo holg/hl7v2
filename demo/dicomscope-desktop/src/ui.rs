@@ -23,6 +23,8 @@ pub struct Actions {
     pub save_pdf: bool,
     /// Re-scan the platform's document folder (iOS).
     pub reload: bool,
+    /// Open one entry of the document folder: a study, or an order.
+    pub open_entry: Option<String>,
     /// The image area in physical pixels, if a study is shown.
     pub image_rect: Option<(u32, u32, u32, u32)>,
 }
@@ -170,6 +172,12 @@ pub fn draw(root: &mut Ui, session: &mut Session, state: &mut UiState) -> Action
             // Long UIDs must wrap or scroll inside the panel, never widen it.
             ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
             egui::ScrollArea::vertical().show(ui, |ui| {
+                let entries = crate::platform::folder_entries();
+                if !entries.is_empty() {
+                    egui::CollapsingHeader::new("Files")
+                        .default_open(true)
+                        .show(ui, |ui| files_panel(ui, &entries, &mut actions));
+                }
                 egui::CollapsingHeader::new("Series")
                     .default_open(true)
                     .show(ui, |ui| series_panel(ui, session, state));
@@ -1104,4 +1112,26 @@ fn fhir_panel(ui: &mut Ui, session: &Session, state: &mut UiState, actions: &mut
                     .selectable(true),
             );
         });
+}
+
+/// The document folder on platforms that have one (iOS): tap an entry to
+/// open that study or order alone.
+fn files_panel(ui: &mut Ui, entries: &[crate::platform::FolderEntry], actions: &mut Actions) {
+    ui.weak("dicomscope folder in Files. Studies open alone; orders load next to the open study.");
+    for e in entries {
+        let size = if e.size >= 1_000_000 {
+            format!("{:.0} MB", e.size as f64 / 1e6)
+        } else {
+            format!("{} KB", e.size / 1000)
+        };
+        let label = format!(
+            "{}  {}  {}",
+            if e.is_order { "HL7" } else { "study" },
+            e.name,
+            size
+        );
+        if ui.button(label).clicked() {
+            actions.open_entry = Some(e.path.clone());
+        }
+    }
 }
