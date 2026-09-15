@@ -233,9 +233,11 @@ cargo run --release -p dicomscope-desktop -- samples/anonymized-demo-clean.zip
 Wheel or Up/Down scroll slices, PageUp/PageDown switch series, Ctrl+wheel or
 +/- zoom, drag pans, right-drag windows, 0 fits, 1 is 1:1, r/R rotate, h/v
 flip, i toggles interpolation, w resets the window. `WGPU_BACKEND=gl` forces
-OpenGL on a machine without a working Vulkan driver. The side panels (series,
-tags, HL7, linkage, worklist, FHIR) are the next step and will use egui over
-the same core.
+OpenGL on a machine without a working Vulkan driver. The panels are egui:
+series with thumbnails, window sliders, the tag tree with filter, the HL7
+message with the order fields highlighted, the linkage table, the worklist
+item with its chain view and a save button, and the FHIR resources with copy
+and save. A study path and an order path can be given on the command line.
 
 ## Supported transfer syntaxes
 

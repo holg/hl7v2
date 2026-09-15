@@ -77,12 +77,16 @@ impl Renderer {
             .await
             .map_err(|e| AppError::NoWebGpu(e.to_string()))?;
         // No optional features: R32Float with textureLoad needs none, and
-        // requiring any would exclude adapters for no benefit.
+        // requiring any would exclude adapters for no benefit. Limits: the
+        // downlevel baseline, but with the adapter's texture sizes, because
+        // the baseline's 2048 px would refuse a 4000 px mammogram and a
+        // high-DPI window surface alike.
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
                 label: Some("dicomscope"),
                 required_features: wgpu::Features::empty(),
-                required_limits: wgpu::Limits::downlevel_defaults(),
+                required_limits: wgpu::Limits::downlevel_defaults()
+                    .using_resolution(adapter.limits()),
                 ..Default::default()
             })
             .await
@@ -258,19 +262,53 @@ impl Renderer {
             .write_buffer(&self.uniform, 0, bytemuck::bytes_of(&self.uniforms));
     }
 
-    /// Draw the current frame with the current window. No-op before upload.
-    pub fn draw(&mut self) -> Result<(), AppError> {
-        let Some(bind_group) = &self.bind_group else {
-            return Ok(());
-        };
-        let target = match self.surface.get_current_texture() {
+    /// The device, for a UI layer that shares it.
+    pub fn device(&self) -> &wgpu::Device {
+        &self.device
+    }
+
+    /// The queue, for a UI layer that shares it.
+    pub fn queue(&self) -> &wgpu::Queue {
+        &self.queue
+    }
+
+    /// The surface format, which a UI pipeline must match.
+    pub fn format(&self) -> wgpu::TextureFormat {
+        self.config.format
+    }
+
+    /// The current surface size in device pixels.
+    pub fn size(&self) -> (u32, u32) {
+        (self.config.width, self.config.height)
+    }
+
+    /// The next surface texture, or `None` when the surface had to be
+    /// reconfigured (the caller draws again on the next frame).
+    pub fn acquire(&mut self) -> Option<wgpu::SurfaceTexture> {
+        match self.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(t)
-            | wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
+            | wgpu::CurrentSurfaceTexture::Suboptimal(t) => Some(t),
             wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
                 self.surface.configure(&self.device, &self.config);
-                return Ok(());
+                None
             }
-            _ => return Ok(()),
+            _ => None,
+        }
+    }
+
+    /// Submit and present, for callers that recorded their own encoder.
+    pub fn present(&self, encoder: wgpu::CommandEncoder, target: wgpu::SurfaceTexture) {
+        self.queue.submit(std::iter::once(encoder.finish()));
+        self.queue.present(target);
+    }
+
+    /// Draw the current frame with the current window. No-op before upload.
+    pub fn draw(&mut self) -> Result<(), AppError> {
+        if self.bind_group.is_none() {
+            return Ok(());
+        }
+        let Some(target) = self.acquire() else {
+            return Ok(());
         };
         let view = target
             .texture
@@ -280,11 +318,26 @@ impl Renderer {
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("draw"),
             });
+        self.draw_image(&mut encoder, &view, None);
+        self.present(encoder, target);
+        Ok(())
+    }
+
+    /// Record the image pass into `encoder`: clear to black, then the frame
+    /// if one is uploaded. `region` (x, y, width, height in device pixels)
+    /// limits the pass to part of the target, for an image area inside a
+    /// UI; the uniforms' `tx`/`ty` stay in whole-target coordinates.
+    pub fn draw_image(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        view: &wgpu::TextureView,
+        region: Option<(u32, u32, u32, u32)>,
+    ) {
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("window"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &view,
+                    view,
                     depth_slice: None,
                     resolve_target: None,
                     ops: wgpu::Operations {
@@ -297,13 +350,19 @@ impl Renderer {
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
-            pass.set_pipeline(&self.pipeline);
-            pass.set_bind_group(0, bind_group, &[]);
-            pass.draw(0..3, 0..1);
+            if let Some((x, y, w, h)) = region {
+                if w == 0 || h == 0 {
+                    return;
+                }
+                pass.set_viewport(x as f32, y as f32, w as f32, h as f32, 0.0, 1.0);
+                pass.set_scissor_rect(x, y, w, h);
+            }
+            if let Some(bind_group) = &self.bind_group {
+                pass.set_pipeline(&self.pipeline);
+                pass.set_bind_group(0, bind_group, &[]);
+                pass.draw(0..3, 0..1);
+            }
         }
-        self.queue.submit(std::iter::once(encoder.finish()));
-        self.queue.present(target);
-        Ok(())
     }
 }
 

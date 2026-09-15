@@ -1,55 +1,43 @@
-//! dicomscope on the desktop: a winit window, a native wgpu surface, and the
-//! same `dicomscope-core` code the browser runs.
+//! dicomscope on the desktop: a winit window, a native wgpu surface, egui
+//! panels, and the same `dicomscope-core` code the browser runs. No WebGPU,
+//! no webview, so it runs where those do not.
 //!
-//! Milestone 1: open a folder, zip or file from the command line, render the
-//! first series, scroll it, window it, zoom and pan. The panels come next.
-//!
-//! Keys: wheel or Up/Down scroll slices, PageUp/PageDown switch series,
-//! Ctrl+wheel or +/- zoom, drag pans, right-drag windows, 0 fits, 1 is 1:1,
-//! r/R rotate, h/v flip, i toggles interpolation, w resets the window,
-//! Escape quits.
+//! The frame is drawn in two passes on one surface: the core renderer paints
+//! the image into the central area, then egui paints the panels over it.
 
 #![forbid(unsafe_code)]
 #![warn(clippy::unwrap_used, clippy::expect_used)]
+#![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
 
-use dicomscope_core::dicom::pixels::FrameInfo;
-use dicomscope_core::dicom::{self, StudySet};
+mod session;
+mod ui;
+
 use dicomscope_core::render::{Renderer, Uniforms};
-use dicomscope_core::view::Viewport;
-use dicomscope_core::{fs, AppError};
+use dicomscope_core::AppError;
+use session::Session;
 use std::sync::Arc;
+use ui::{Actions, UiState};
 use winit::application::ApplicationHandler;
-use winit::dpi::PhysicalPosition;
-use winit::event::{ElementState, KeyEvent, MouseButton, MouseScrollDelta, WindowEvent};
+use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
-use winit::keyboard::{Key, NamedKey};
 use winit::window::{Window, WindowId};
 
 fn main() {
-    let path = match std::env::args().nth(1) {
-        Some(p) => p,
-        None => {
-            eprintln!("usage: dicomscope-desktop <folder | study.zip | file.dcm>");
-            std::process::exit(2);
+    let mut session = Session::default();
+    let mut args = std::env::args().skip(1);
+    // Optional: a study path, then an HL7 path.
+    if let Some(study) = args.next() {
+        session.open_study(&study);
+        if let Some(e) = &session.error {
+            eprintln!("{e}");
         }
-    };
-    let set = match fs::collect_inputs(&path).map(StudySet::scan) {
-        Ok(set) if !set.is_empty() => set,
-        Ok(_) => {
-            eprintln!("{path}: no displayable DICOM image found");
-            std::process::exit(1);
+    }
+    if let Some(hl7) = args.next() {
+        session.open_hl7(&hl7);
+        if let Some(e) = &session.error {
+            eprintln!("{e}");
         }
-        Err(e) => {
-            eprintln!("error: {e}");
-            std::process::exit(1);
-        }
-    };
-    eprintln!(
-        "scanned {path}: {} series, {} slices, {} skipped",
-        set.series.len(),
-        set.slice_count(),
-        set.skipped.len()
-    );
+    }
     let event_loop = match EventLoop::new() {
         Ok(l) => l,
         Err(e) => {
@@ -58,265 +46,42 @@ fn main() {
         }
     };
     event_loop.set_control_flow(ControlFlow::Wait);
-    let mut app = App::new(set);
+    let mut app = App {
+        session,
+        gpu: None,
+        ui: UiState::default(),
+    };
     if let Err(e) = event_loop.run_app(&mut app) {
         eprintln!("event loop failed: {e}");
         std::process::exit(1);
     }
 }
 
-/// Everything the window needs. Created on `resumed`, as winit requires.
+/// Everything that exists only while the window does.
 struct Gpu {
     window: Arc<Window>,
     renderer: Renderer,
+    egui_ctx: egui::Context,
+    egui_state: egui_winit::State,
+    egui_renderer: egui_wgpu::Renderer,
 }
 
 struct App {
-    set: StudySet,
+    session: Session,
     gpu: Option<Gpu>,
-    /// (series, slice) on screen.
-    current: (usize, usize),
-    frame: Option<FrameInfo>,
-    view: Viewport,
-    window: (f32, f32),
-    error: Option<String>,
-    cursor: PhysicalPosition<f64>,
-    drag: Option<Drag>,
-    ctrl: bool,
-}
-
-#[derive(Clone, Copy)]
-enum Drag {
-    Pan,
-    Window {
-        start: PhysicalPosition<f64>,
-        from: (f32, f32),
-    },
+    ui: UiState,
 }
 
 impl App {
-    fn new(set: StudySet) -> App {
-        App {
-            set,
-            gpu: None,
-            current: (0, 0),
-            frame: None,
-            view: Viewport::default(),
-            window: (0.0, 1.0),
-            error: None,
-            cursor: PhysicalPosition::new(0.0, 0.0),
-            drag: None,
-            ctrl: false,
-        }
-    }
-
-    fn canvas(&self) -> (u32, u32) {
-        match &self.gpu {
-            Some(g) => {
-                let s = g.window.inner_size();
-                (s.width.max(1), s.height.max(1))
-            }
-            None => (1, 1),
-        }
-    }
-
-    fn image(&self) -> Option<(u32, u32)> {
-        self.frame.as_ref().map(|f| (f.width, f.height))
-    }
-
-    /// Decode and upload one slice. `reset` refits the view and reloads the
-    /// window from the file; scrolling within a series keeps both.
-    fn show_slice(&mut self, series: usize, slice: usize, reset: bool) {
-        let Some((_, s)) = self.set.slice(series, slice) else {
-            return;
-        };
-        let (file, frame_index) = (s.file, s.frame);
-        let name = self.set.files[file].name.clone();
-        let frame = self
-            .set
-            .bytes(file)
-            .map_err(AppError::FileRead)
-            .and_then(|bytes| dicom::load(&bytes))
-            .and_then(|obj| dicom::decode_frame(&obj, frame_index));
-        match frame {
-            Ok(frame) => {
-                let info = FrameInfo::from(&frame);
-                if let Some(g) = &mut self.gpu {
-                    g.renderer.upload(&frame);
-                }
-                let size_changed = self.image() != Some((info.width, info.height));
-                if reset || size_changed {
-                    self.view = Viewport::default().fit(self.canvas(), (info.width, info.height));
-                }
-                if reset {
-                    self.window = info
-                        .default_window
-                        .unwrap_or_else(|| dicom::fallback_window(info.value_range));
-                }
-                self.frame = Some(info);
-                self.error = None;
-            }
-            Err(e) => {
-                self.error = Some(format!("{name}: {e}"));
-                eprintln!("{name}: {e}");
-            }
-        }
-        self.current = (series, slice);
-        self.update_title();
-        self.redraw();
-    }
-
-    fn update_title(&self) {
-        let Some(g) = &self.gpu else { return };
-        let (si, sl) = self.current;
-        let title = match self.set.series.get(si) {
-            Some(series) => format!(
-                "dicomscope  {}  slice {}/{}  W {:.0} L {:.0}  zoom {:.0}%",
-                series.label(),
-                sl + 1,
-                series.slices.len(),
-                self.window.1,
-                self.window.0,
-                self.view.scale * 100.0
-            ),
-            None => "dicomscope".to_string(),
-        };
-        g.window.set_title(&title);
-    }
-
-    fn redraw(&self) {
-        if let Some(g) = &self.gpu {
-            g.window.request_redraw();
-        }
-    }
-
-    fn draw(&mut self) {
-        let Some(frame) = &self.frame else { return };
-        let (c, w) = self.window;
-        let v = self.view;
-        let uniforms = Uniforms {
-            center: c,
-            width: w,
-            invert: u32::from(frame.inverted),
-            interp: u32::from(v.smooth),
-            scale: v.scale,
-            tx: v.tx,
-            ty: v.ty,
-            color: u32::from(frame.color),
-            rot: u32::from(v.rotation),
-            flip: u32::from(v.flip_h) | (u32::from(v.flip_v) << 1),
-            _pad0: 0,
-            _pad1: 0,
-        };
-        if let Some(g) = &mut self.gpu {
-            g.renderer.set_uniforms(uniforms);
-            if let Err(e) = g.renderer.draw() {
-                eprintln!("draw failed: {e}");
-            }
-        }
-    }
-
-    fn scroll_slices(&mut self, delta: i32) {
-        let (si, sl) = self.current;
-        let Some(series) = self.set.series.get(si) else {
-            return;
-        };
-        let n = series.slices.len() as i32;
-        let next = (sl as i32 + delta).clamp(0, n - 1) as usize;
-        if next != sl {
-            self.show_slice(si, next, false);
-        }
-    }
-
-    fn switch_series(&mut self, delta: i32) {
-        let n = self.set.series.len() as i32;
-        let next = (self.current.0 as i32 + delta).clamp(0, n - 1) as usize;
-        if next != self.current.0 {
-            self.show_slice(next, 0, true);
-        }
-    }
-
-    fn zoom(&mut self, factor: f32) {
-        let (x, y) = (self.cursor.x as f32, self.cursor.y as f32);
-        self.view = self.view.zoom_about(factor, x, y);
-        self.update_title();
-        self.redraw();
-    }
-
-    fn key(&mut self, event: KeyEvent, event_loop: &ActiveEventLoop) {
-        if event.state != ElementState::Pressed {
-            return;
-        }
-        let image = self.image();
-        match event.logical_key.as_ref() {
-            Key::Named(NamedKey::Escape) => event_loop.exit(),
-            Key::Named(NamedKey::ArrowUp) => self.scroll_slices(-1),
-            Key::Named(NamedKey::ArrowDown) => self.scroll_slices(1),
-            Key::Named(NamedKey::Home) => self.show_slice(self.current.0, 0, false),
-            Key::Named(NamedKey::End) => {
-                let last = self.set.series[self.current.0]
-                    .slices
-                    .len()
-                    .saturating_sub(1);
-                self.show_slice(self.current.0, last, false);
-            }
-            Key::Named(NamedKey::PageUp) => self.switch_series(-1),
-            Key::Named(NamedKey::PageDown) => self.switch_series(1),
-            Key::Character("+") | Key::Character("=") => self.zoom(1.25),
-            Key::Character("-") => self.zoom(0.8),
-            Key::Character("0") => {
-                if let Some(img) = image {
-                    self.view = self.view.fit(self.canvas(), img);
-                }
-            }
-            Key::Character("1") => {
-                if let Some(img) = image {
-                    self.view = self.view.one_to_one(self.canvas(), img);
-                }
-            }
-            Key::Character("r") => {
-                if let Some(img) = image {
-                    self.view = self.view.rotate(1, img);
-                }
-            }
-            Key::Character("R") => {
-                if let Some(img) = image {
-                    self.view = self.view.rotate(-1, img);
-                }
-            }
-            Key::Character("h") => self.view = self.view.flip_horizontal(),
-            Key::Character("v") => self.view = self.view.flip_vertical(),
-            Key::Character("i") => self.view.smooth = !self.view.smooth,
-            Key::Character("w") => {
-                if let Some(f) = &self.frame {
-                    self.window = f
-                        .default_window
-                        .unwrap_or_else(|| dicom::fallback_window(f.value_range));
-                }
-            }
-            _ => return,
-        }
-        self.update_title();
-        self.redraw();
-    }
-}
-
-impl ApplicationHandler for App {
-    fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        if self.gpu.is_some() {
-            return;
-        }
+    fn create(&mut self, event_loop: &ActiveEventLoop) -> Result<Gpu, String> {
         let attributes = Window::default_attributes()
             .with_title("dicomscope")
-            .with_inner_size(winit::dpi::LogicalSize::new(1024.0, 768.0));
-        let window = match event_loop.create_window(attributes) {
-            Ok(w) => Arc::new(w),
-            Err(e) => {
-                eprintln!("cannot create a window: {e}");
-                event_loop.exit();
-                return;
-            }
-        };
+            .with_inner_size(winit::dpi::LogicalSize::new(1400.0, 900.0));
+        let window = Arc::new(
+            event_loop
+                .create_window(attributes)
+                .map_err(|e| format!("cannot create a window: {e}"))?,
+        );
         // The display handle lets Vulkan and GL pick the right surface
         // extension on Wayland and X11. WGPU_BACKEND in the environment
         // overrides the backend choice, which is the Linux escape hatch.
@@ -326,104 +91,247 @@ impl ApplicationHandler for App {
                 event_loop.owned_display_handle(),
             ))
         });
-        let surface = match instance.create_surface(window.clone()) {
-            Ok(s) => s,
-            Err(e) => {
-                eprintln!("cannot create a surface for the window: {e}");
-                event_loop.exit();
-                return;
-            }
-        };
+        let surface = instance
+            .create_surface(window.clone())
+            .map_err(|e| format!("cannot create a surface for the window: {e}"))?;
         let size = window.inner_size();
         let renderer =
-            match pollster::block_on(Renderer::new(&instance, surface, size.width, size.height)) {
-                Ok(r) => r,
-                Err(AppError::NoWebGpu(e)) => {
-                    eprintln!("no GPU adapter (Vulkan, Metal, DX12 or OpenGL): {e}");
-                    event_loop.exit();
-                    return;
+            pollster::block_on(Renderer::new(&instance, surface, size.width, size.height))
+                .map_err(|e| match e {
+                    AppError::NoWebGpu(e) => {
+                        format!("no GPU adapter (Vulkan, Metal, DX12 or OpenGL): {e}")
+                    }
+                    e => e.to_string(),
+                })?;
+
+        let egui_ctx = egui::Context::default();
+        let egui_state = egui_winit::State::new(
+            egui_ctx.clone(),
+            egui::ViewportId::ROOT,
+            &window,
+            Some(window.scale_factor() as f32),
+            None,
+            Some(renderer.device().limits().max_texture_dimension_2d as usize),
+        );
+        let egui_renderer = egui_wgpu::Renderer::new(
+            renderer.device(),
+            renderer.format(),
+            egui_wgpu::RendererOptions::default(),
+        );
+        Ok(Gpu {
+            window,
+            renderer,
+            egui_ctx,
+            egui_state,
+            egui_renderer,
+        })
+    }
+
+    fn frame(&mut self) {
+        let Some(gpu) = &mut self.gpu else { return };
+        let raw_input = gpu.egui_state.take_egui_input(&gpu.window);
+        let mut actions = Actions::default();
+        let output = gpu.egui_ctx.run_ui(raw_input, |ui| {
+            actions = ui::draw(ui, &mut self.session, &mut self.ui);
+        });
+        gpu.egui_state
+            .handle_platform_output(&gpu.window, output.platform_output);
+
+        // A newly decoded slice goes to the GPU before this frame is drawn.
+        if let Some(frame) = self.session.take_pending_frame() {
+            gpu.renderer.upload(&frame);
+        }
+
+        let (w, h) = gpu.renderer.size();
+        let ppp = output.pixels_per_point;
+        let primitives = gpu.egui_ctx.tessellate(output.shapes, ppp);
+        let screen = egui_wgpu::ScreenDescriptor {
+            size_in_pixels: [w, h],
+            pixels_per_point: ppp,
+        };
+        for (id, deltas) in &output.textures_delta.set {
+            for delta in deltas {
+                gpu.egui_renderer.update_texture(
+                    gpu.renderer.device(),
+                    gpu.renderer.queue(),
+                    *id,
+                    delta,
+                );
+            }
+        }
+        let Some(target) = gpu.renderer.acquire() else {
+            gpu.window.request_redraw();
+            return;
+        };
+        let view = target
+            .texture
+            .create_view(&wgpu::TextureViewDescriptor::default());
+        let mut encoder =
+            gpu.renderer
+                .device()
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("frame"),
+                });
+        gpu.egui_renderer.update_buffers(
+            gpu.renderer.device(),
+            gpu.renderer.queue(),
+            &mut encoder,
+            &primitives,
+            &screen,
+        );
+
+        // Pass 1: the image, inside the central area. The view geometry is
+        // relative to that area, the uniforms to the whole surface.
+        if let (Some((x, y, _, _)), Some(f)) = (actions.image_rect, &self.session.frame) {
+            let v = self.session.view;
+            let (c, wdt) = self.session.window;
+            gpu.renderer.set_uniforms(Uniforms {
+                center: c,
+                width: wdt,
+                invert: u32::from(f.inverted),
+                interp: u32::from(v.smooth),
+                scale: v.scale,
+                tx: v.tx + x as f32,
+                ty: v.ty + y as f32,
+                color: u32::from(f.color),
+                rot: u32::from(v.rotation),
+                flip: u32::from(v.flip_h) | (u32::from(v.flip_v) << 1),
+                _pad0: 0,
+                _pad1: 0,
+            });
+        }
+        gpu.renderer
+            .draw_image(&mut encoder, &view, actions.image_rect);
+
+        // Pass 2: egui on top, keeping what pass 1 drew.
+        {
+            let pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("egui"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &view,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            let mut pass = pass.forget_lifetime();
+            gpu.egui_renderer.render(&mut pass, &primitives, &screen);
+        }
+        gpu.renderer.present(encoder, target);
+        for id in &output.textures_delta.free {
+            gpu.egui_renderer.free_texture(id);
+        }
+
+        // File dialogs after the frame, so the UI that asked is on screen.
+        self.run_actions(&actions);
+
+        if output
+            .viewport_output
+            .get(&egui::ViewportId::ROOT)
+            .is_some_and(|v| v.repaint_delay.is_zero())
+        {
+            if let Some(gpu) = &self.gpu {
+                gpu.window.request_redraw();
+            }
+        }
+    }
+
+    fn run_actions(&mut self, actions: &Actions) {
+        let picked = if actions.open_study_folder {
+            rfd::FileDialog::new()
+                .set_title("Open a study folder")
+                .pick_folder()
+        } else if actions.open_study_file {
+            rfd::FileDialog::new()
+                .set_title("Open a zip or a DICOM file")
+                .add_filter("DICOM or zip", &["dcm", "zip", "DCM", "ZIP"])
+                .add_filter("All files", &["*"])
+                .pick_file()
+        } else {
+            None
+        };
+        if let Some(p) = picked {
+            self.session.open_study(&p.display().to_string());
+            self.ui.thumb_textures.clear();
+        }
+        if actions.open_hl7 {
+            if let Some(p) = rfd::FileDialog::new()
+                .set_title("Open an HL7 v2 order")
+                .add_filter("HL7", &["hl7", "txt", "HL7"])
+                .add_filter("All files", &["*"])
+                .pick_file()
+            {
+                self.session.open_hl7(&p.display().to_string());
+            }
+        }
+        if actions.save_worklist {
+            if let Some(Ok(out)) = &self.session.worklist {
+                if let Some(p) = rfd::FileDialog::new()
+                    .set_file_name("order.mwl.dcm")
+                    .save_file()
+                {
+                    self.ui.status = Some(match std::fs::write(&p, &out.bytes) {
+                        Ok(()) => format!("Wrote {} ({} bytes).", p.display(), out.bytes.len()),
+                        Err(e) => format!("{}: {e}", p.display()),
+                    });
                 }
-                Err(e) => {
-                    eprintln!("{e}");
-                    event_loop.exit();
-                    return;
+            }
+        }
+        if actions.save_fhir {
+            if let Some(f) = &self.session.fhir {
+                if let Some(p) = rfd::FileDialog::new()
+                    .set_file_name("bundle.json")
+                    .save_file()
+                {
+                    self.ui.status = Some(match std::fs::write(&p, f.bundle.as_bytes()) {
+                        Ok(()) => format!("Wrote {}.", p.display()),
+                        Err(e) => format!("{}: {e}", p.display()),
+                    });
                 }
-            };
-        self.gpu = Some(Gpu { window, renderer });
-        self.show_slice(0, 0, true);
+            }
+        }
+        if let Some(gpu) = &self.gpu {
+            gpu.window.request_redraw();
+        }
+    }
+}
+
+impl ApplicationHandler for App {
+    fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+        if self.gpu.is_some() {
+            return;
+        }
+        match self.create(event_loop) {
+            Ok(gpu) => self.gpu = Some(gpu),
+            Err(e) => {
+                eprintln!("{e}");
+                event_loop.exit();
+            }
+        }
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
+        let Some(gpu) = &mut self.gpu else { return };
+        let response = gpu.egui_state.on_window_event(&gpu.window, &event);
         match event {
             WindowEvent::CloseRequested => event_loop.exit(),
             WindowEvent::Resized(size) => {
-                if let Some(g) = &mut self.gpu {
-                    g.renderer.resize(size.width, size.height);
-                }
-                if let Some(img) = self.image() {
-                    self.view = self.view.fit(self.canvas(), img);
-                }
-                self.redraw();
+                gpu.renderer.resize(size.width, size.height);
+                gpu.window.request_redraw();
             }
-            WindowEvent::RedrawRequested => self.draw(),
-            WindowEvent::ModifiersChanged(m) => {
-                self.ctrl = m.state().control_key() || m.state().super_key();
-            }
-            WindowEvent::KeyboardInput { event, .. } => self.key(event, event_loop),
-            WindowEvent::CursorMoved { position, .. } => {
-                let previous = self.cursor;
-                self.cursor = position;
-                match self.drag {
-                    Some(Drag::Pan) => {
-                        let dx = (position.x - previous.x) as f32;
-                        let dy = (position.y - previous.y) as f32;
-                        self.view = self.view.pan(dx, dy);
-                        self.redraw();
-                    }
-                    Some(Drag::Window { start, from }) => {
-                        // Radiology convention: horizontal drag changes the
-                        // width, vertical the centre; both scaled to the
-                        // value range so a screen-width drag spans it.
-                        let Some(f) = &self.frame else { return };
-                        let span = (f.value_range.1 - f.value_range.0).max(1.0);
-                        let (cw, ch) = self.canvas();
-                        let dx = (position.x - start.x) as f32 / cw as f32 * span;
-                        let dy = (position.y - start.y) as f32 / ch as f32 * span;
-                        self.window = (
-                            (from.0 + dy).clamp(f.value_range.0, f.value_range.1),
-                            (from.1 + dx).max(1.0),
-                        );
-                        self.update_title();
-                        self.redraw();
-                    }
-                    None => {}
+            WindowEvent::RedrawRequested => self.frame(),
+            _ => {
+                if response.repaint {
+                    gpu.window.request_redraw();
                 }
             }
-            WindowEvent::MouseInput { state, button, .. } => {
-                self.drag = match (state, button) {
-                    (ElementState::Pressed, MouseButton::Left) => Some(Drag::Pan),
-                    (ElementState::Pressed, MouseButton::Right) => Some(Drag::Window {
-                        start: self.cursor,
-                        from: self.window,
-                    }),
-                    _ => None,
-                };
-            }
-            WindowEvent::MouseWheel { delta, .. } => {
-                let steps = match delta {
-                    MouseScrollDelta::LineDelta(_, y) => y,
-                    MouseScrollDelta::PixelDelta(p) => (p.y / 40.0) as f32,
-                };
-                if steps == 0.0 {
-                    return;
-                }
-                if self.ctrl {
-                    self.zoom(if steps > 0.0 { 1.1 } else { 1.0 / 1.1 });
-                } else {
-                    self.scroll_slices(if steps > 0.0 { -1 } else { 1 });
-                }
-            }
-            _ => {}
         }
     }
 }
