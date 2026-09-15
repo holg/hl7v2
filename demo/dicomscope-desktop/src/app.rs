@@ -32,8 +32,10 @@ pub fn run(paths: Vec<String>) {
         }
     };
     event_loop.set_control_flow(ControlFlow::Wait);
-    let mut ui = UiState::default();
-    ui.status = platform::picker_note().map(str::to_string);
+    let ui = UiState {
+        status: platform::picker_note().map(str::to_string),
+        ..UiState::default()
+    };
     let mut app = App {
         session,
         gpu: None,
