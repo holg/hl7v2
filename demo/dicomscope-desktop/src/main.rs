@@ -297,6 +297,34 @@ impl App {
                 }
             }
         }
+        if actions.open_pdf || actions.save_pdf {
+            if let Some((_, session::DocumentContent::Pdf { title, bytes, .. })) =
+                &self.session.document
+            {
+                let file_name = format!(
+                    "{}.pdf",
+                    title
+                        .chars()
+                        .map(|c| if c.is_alphanumeric() { c } else { '_' })
+                        .collect::<String>()
+                );
+                let target = if actions.save_pdf {
+                    rfd::FileDialog::new().set_file_name(&file_name).save_file()
+                } else {
+                    Some(std::env::temp_dir().join(file_name))
+                };
+                if let Some(p) = target {
+                    self.ui.status = Some(match std::fs::write(&p, bytes) {
+                        Ok(()) if actions.open_pdf => match open::that(&p) {
+                            Ok(()) => format!("Opened {} in the system viewer.", p.display()),
+                            Err(e) => format!("{}: {e}", p.display()),
+                        },
+                        Ok(()) => format!("Wrote {}.", p.display()),
+                        Err(e) => format!("{}: {e}", p.display()),
+                    });
+                }
+            }
+        }
         if let Some(gpu) = &self.gpu {
             gpu.window.request_redraw();
         }

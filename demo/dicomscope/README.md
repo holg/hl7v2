@@ -232,8 +232,12 @@ cargo run --release -p dicomscope-desktop -- samples/anonymized-demo-clean.zip
 
 Wheel or Up/Down scroll slices, PageUp/PageDown switch series, a trackpad
 pinch, Option/Alt+wheel or +/- zoom, drag pans, right-drag windows, 0 fits, 1 is 1:1, r/R rotate, h/v
-flip, i toggles interpolation, w resets the window. `WGPU_BACKEND=gl` forces
-OpenGL on a machine without a working Vulkan driver. The panels are egui:
+flip, i toggles interpolation, w resets the window, space plays the series as
+cine at the file's frame rate. Length and Angle tools measure in millimetres
+when the file carries pixel spacing (Undo and Clear, Delete removes the last).
+Reports open as text and encapsulated PDFs in the system viewer; files dropped
+onto the window open as a study or, for `.hl7`, as the order. `WGPU_BACKEND=gl`
+forces OpenGL on a machine without a working Vulkan driver. The panels are egui:
 series with thumbnails, window sliders, the tag tree with filter, the HL7
 message with the order fields highlighted, the linkage table, the worklist
 item with its chain view and a save button, and the FHIR resources with copy

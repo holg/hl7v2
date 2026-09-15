@@ -1,13 +1,15 @@
 //! The egui panels. Pure presentation over [`Session`]; file dialogs and
 //! GPU work are requested through [`Actions`] and done by the window loop.
 
-use crate::session::{FhirText, Session};
+use crate::session::{DocumentContent, FhirText, Session};
 use dicomscope_core::dicom::TagRow;
 use dicomscope_core::link::{ChainFinding, KeyConflict, LinkPath, Pair};
+use dicomscope_core::measure::{Measurement, Point};
 use dicomscope_core::view::Viewport;
-use egui::{Color32, Key, RichText, TextureHandle, Ui};
+use egui::{Color32, Key, Pos2, RichText, TextureHandle, Ui};
 use hl7kit::order::OrderField;
 use mwlkit::StudyUidOrigin;
+use std::time::Duration;
 
 /// What the panels asked the window loop to do this frame.
 #[derive(Default)]
@@ -17,8 +19,19 @@ pub struct Actions {
     pub open_hl7: bool,
     pub save_worklist: bool,
     pub save_fhir: bool,
+    pub open_pdf: bool,
+    pub save_pdf: bool,
     /// The image area in physical pixels, if a study is shown.
     pub image_rect: Option<(u32, u32, u32, u32)>,
+}
+
+/// What the left mouse button does in the image area.
+#[derive(Default, Clone, Copy, PartialEq, Eq)]
+pub enum Tool {
+    #[default]
+    Pan,
+    Length,
+    Angle,
 }
 
 /// UI-only state that outlives a frame.
@@ -30,6 +43,9 @@ pub struct UiState {
     pub thumb_textures: Vec<Option<TextureHandle>>,
     pub scroll_accum: f32,
     pub status: Option<String>,
+    pub tool: Tool,
+    /// Points of the measurement being drawn, in source pixels.
+    pub draft: Vec<Point>,
 }
 
 #[derive(Default, Clone, Copy, PartialEq, Eq)]
@@ -73,6 +89,20 @@ const WARN: Color32 = Color32::from_rgb(0x9a, 0x6a, 0x00);
 pub fn draw(root: &mut Ui, session: &mut Session, state: &mut UiState) -> Actions {
     let mut actions = Actions::default();
 
+    // Files dropped onto the window, from winit through egui.
+    let dropped: Vec<String> = root.ctx().input(|i| {
+        i.raw
+            .dropped_files
+            .iter()
+            .map(|f| f.path().display().to_string())
+            .filter(|p| !p.is_empty())
+            .collect()
+    });
+    if !dropped.is_empty() {
+        session.open_paths(&dropped);
+        state.thumb_textures.clear();
+    }
+
     egui::Panel::top("top").show(root, |ui| {
         ui.horizontal_wrapped(|ui| {
             ui.heading("dicomscope");
@@ -84,6 +114,32 @@ pub fn draw(root: &mut Ui, session: &mut Session, state: &mut UiState) -> Action
             }
             if ui.button("Open HL7 order").clicked() {
                 actions.open_hl7 = true;
+            }
+            ui.separator();
+            for (t, label) in [
+                (Tool::Pan, "Pan"),
+                (Tool::Length, "Length"),
+                (Tool::Angle, "Angle"),
+            ] {
+                if ui.selectable_label(state.tool == t, label).clicked() {
+                    state.tool = t;
+                    state.draft.clear();
+                }
+            }
+            if ui.button("Undo").clicked() {
+                session.remove_last_measurement();
+            }
+            if ui.button("Clear").clicked() {
+                session.clear_measurements();
+            }
+            ui.separator();
+            let now = ui.input(|i| i.time);
+            if ui
+                .button(if session.playing { "Pause" } else { "Play" })
+                .on_hover_text("Space. Cine through the series at the file's frame rate.")
+                .clicked()
+            {
+                session.toggle_cine(now);
             }
             if !session.source.is_empty() {
                 ui.label(RichText::new(&session.source).weak());
@@ -170,25 +226,91 @@ fn image_area(ui: &mut Ui, session: &mut Session, state: &mut UiState, actions: 
         px(rect.height()),
     );
     session.set_canvas((region.2, region.3));
-    let response = ui.allocate_rect(rect, egui::Sense::click_and_drag());
 
     if session.set.is_none() {
         ui.put(
             rect,
             egui::Label::new(
-                RichText::new("Open a study folder, a zip or a DICOM file.\nThen open its HL7 order to see the linkage, the worklist item and the FHIR output.")
+                RichText::new("Open a study folder, a zip or a DICOM file, or drop them here.\nThen open its HL7 order to see the linkage, the worklist item and the FHIR output.")
                     .color(Color32::GRAY),
             ),
         );
+        drop_hint(ui, rect);
         return;
     }
+    if session.document.is_some() {
+        document_view(ui, session, actions);
+        return;
+    }
+    let response = ui.allocate_rect(rect, egui::Sense::click_and_drag());
     actions.image_rect = Some(region);
 
-    // Drag: left pans, right windows (horizontal = width, vertical = centre).
-    if response.dragged_by(egui::PointerButton::Primary) {
-        let d = response.drag_delta() * ppp;
-        session.view = session.view.pan(d.x, d.y);
+    // Source pixel <-> screen point, through the view geometry in device pixels.
+    let image = session.image().unwrap_or((1, 1));
+    let view = session.view;
+    let to_source = |p: Pos2| -> Point {
+        let c = ((p.x - rect.min.x) * ppp, (p.y - rect.min.y) * ppp);
+        view.canvas_to_source(c, image)
+    };
+    let to_screen = |s: Point| -> Pos2 {
+        let c = view.source_to_canvas(s, image);
+        Pos2::new(rect.min.x + c.0 / ppp, rect.min.y + c.1 / ppp)
+    };
+    let pointer = ui
+        .input(|i| i.pointer.hover_pos())
+        .or_else(|| response.interact_pointer_pos());
+
+    // Left button: pan, or draw a measurement.
+    match state.tool {
+        Tool::Pan => {
+            if response.dragged_by(egui::PointerButton::Primary) {
+                let d = response.drag_delta() * ppp;
+                session.view = session.view.pan(d.x, d.y);
+            }
+        }
+        Tool::Length => {
+            if let Some(p) = pointer.map(to_source) {
+                if response.drag_started_by(egui::PointerButton::Primary) {
+                    state.draft = vec![p, p];
+                } else if response.dragged_by(egui::PointerButton::Primary)
+                    && state.draft.len() == 2
+                {
+                    state.draft[1] = p;
+                }
+                if response.drag_stopped_by(egui::PointerButton::Primary) && state.draft.len() == 2
+                {
+                    let a = state.draft[0];
+                    if dicomscope_core::measure::length_px(a, p) >= 1.0 {
+                        session.push_measurement(Measurement::Length { a, b: p });
+                    }
+                    state.draft.clear();
+                }
+            }
+        }
+        Tool::Angle => {
+            if let Some(p) = pointer.map(to_source) {
+                if response.clicked_by(egui::PointerButton::Primary) {
+                    // The last draft point follows the pointer; a click fixes it.
+                    if let Some(last) = state.draft.last_mut() {
+                        *last = p;
+                    }
+                    if state.draft.len() >= 3 {
+                        session.push_measurement(Measurement::Angle {
+                            a: state.draft[0],
+                            vertex: state.draft[1],
+                            c: state.draft[2],
+                        });
+                        state.draft.clear();
+                    } else {
+                        state.draft.push(p);
+                    }
+                } else if let Some(last) = state.draft.last_mut() {
+                    *last = p;
+                }
+            }
+        }
     }
+    // Right button windows: horizontal = width, vertical = centre.
     if response.dragged_by(egui::PointerButton::Secondary) {
         if let Some(f) = &session.frame {
             let span = (f.value_range.1 - f.value_range.0).max(1.0);
@@ -206,14 +328,8 @@ fn image_area(ui: &mut Ui, session: &mut Session, state: &mut UiState, actions: 
     // Ctrl+wheel: on macOS that is the system accessibility zoom and does
     // not reach the application.
     if response.hovered() {
-        let (scroll, zoom, modifiers, pointer) = ui.input(|i| {
-            (
-                i.smooth_scroll_delta,
-                i.zoom_delta(),
-                i.modifiers,
-                i.pointer.hover_pos(),
-            )
-        });
+        let (scroll, zoom, modifiers) =
+            ui.input(|i| (i.smooth_scroll_delta, i.zoom_delta(), i.modifiers));
         let p = pointer.unwrap_or(rect.center()) - rect.min;
         if zoom != 1.0 {
             session.view = session.view.zoom_about(zoom, p.x * ppp, p.y * ppp);
@@ -238,6 +354,7 @@ fn image_area(ui: &mut Ui, session: &mut Session, state: &mut UiState, actions: 
     if !ui.ctx().egui_wants_keyboard_input() {
         let pressed = |k: Key| ui.input(|i| i.key_pressed(k));
         let shift = ui.input(|i| i.modifiers.shift);
+        let now = ui.input(|i| i.time);
         if pressed(Key::ArrowUp) {
             session.scroll_slices(-1);
         }
@@ -261,6 +378,20 @@ fn image_area(ui: &mut Ui, session: &mut Session, state: &mut UiState, actions: 
                 .map(|s| s.slices.len())
             {
                 session.show_slice(session.current.0, n.saturating_sub(1), false);
+            }
+        }
+        if pressed(Key::Space) {
+            session.toggle_cine(now);
+        }
+        if pressed(Key::Escape) {
+            state.draft.clear();
+            state.tool = Tool::Pan;
+        }
+        if pressed(Key::Delete) || pressed(Key::Backspace) {
+            if state.draft.is_empty() {
+                session.remove_last_measurement();
+            } else {
+                state.draft.clear();
             }
         }
         if pressed(Key::Num0) {
@@ -293,8 +424,65 @@ fn image_area(ui: &mut Ui, session: &mut Session, state: &mut UiState, actions: 
             session.reset_window();
         }
     }
+    // Cine: step on the UI clock and keep frames coming.
+    if session.playing {
+        let now = ui.input(|i| i.time);
+        session.cine_tick(now);
+        let half = (session.frame_ms() / 2.0).max(8.0) as u64;
+        ui.ctx().request_repaint_after(Duration::from_millis(half));
+    }
 
-    // Overlay, top-left of the image area.
+    // Measurements and the draft, drawn in screen space over the image.
+    let spacing = session.frame.as_ref().and_then(|f| f.spacing);
+    let painter = ui.painter_at(rect);
+    let stroke = egui::Stroke::new(1.5, Color32::from_rgb(0xff, 0xd7, 0x4d));
+    let label = |painter: &egui::Painter, at: Pos2, text: String| {
+        painter.text(
+            at + egui::vec2(6.0, -6.0),
+            egui::Align2::LEFT_BOTTOM,
+            text,
+            egui::FontId::proportional(13.0),
+            Color32::from_rgb(0xff, 0xd7, 0x4d),
+        );
+    };
+    for m in session.measurements() {
+        let pts: Vec<Pos2> = m.points().iter().map(|&p| to_screen(p)).collect();
+        painter.add(egui::Shape::line(pts.clone(), stroke));
+        for p in &pts {
+            painter.circle_filled(*p, 3.0, stroke.color);
+        }
+        let at = match m {
+            Measurement::Length { .. } => {
+                Pos2::new((pts[0].x + pts[1].x) / 2.0, (pts[0].y + pts[1].y) / 2.0)
+            }
+            Measurement::Angle { .. } => pts[1],
+        };
+        label(&painter, at, m.label(spacing));
+    }
+    if state.draft.len() >= 2 {
+        let pts: Vec<Pos2> = state.draft.iter().map(|&p| to_screen(p)).collect();
+        painter.add(egui::Shape::line(
+            pts.clone(),
+            egui::Stroke::new(1.0, Color32::from_rgb(0xff, 0xf0, 0xa0)),
+        ));
+        let preview = match state.tool {
+            Tool::Length => Some(Measurement::Length {
+                a: state.draft[0],
+                b: state.draft[1],
+            }),
+            Tool::Angle if state.draft.len() == 3 => Some(Measurement::Angle {
+                a: state.draft[0],
+                vertex: state.draft[1],
+                c: state.draft[2],
+            }),
+            _ => None,
+        };
+        if let Some(m) = preview {
+            label(&painter, pts[pts.len() - 1], m.label(spacing));
+        }
+    }
+
+    // Overlay, top-left and bottom-left of the image area.
     if let Some(f) = &session.frame {
         let (si, sl) = session.current;
         let series_len = session
@@ -305,7 +493,7 @@ fn image_area(ui: &mut Ui, session: &mut Session, state: &mut UiState, actions: 
             .unwrap_or(0);
         let v: Viewport = session.view;
         let text = format!(
-            "{}  {}x{}  {}-bit  slice {}/{}  W {:.0} L {:.0}  zoom {:.0}%{}{}",
+            "{}  {}x{}  {}-bit  slice {}/{}  W {:.0} L {:.0}  zoom {:.0}%{}{}{}{}",
             session
                 .study
                 .as_ref()
@@ -325,22 +513,95 @@ fn image_area(ui: &mut Ui, session: &mut Session, state: &mut UiState, actions: 
                 String::new()
             },
             if v.smooth { "" } else { "  nearest" },
+            if session.playing {
+                format!("  playing {:.0} ms/frame", session.frame_ms())
+            } else {
+                String::new()
+            },
+            match spacing {
+                Some(s) if s.at_detector => "  *spacing at detector",
+                Some(_) => "",
+                None => "  no pixel spacing: lengths in px",
+            },
         );
-        ui.painter().text(
+        painter.text(
             rect.min + egui::vec2(8.0, 8.0),
             egui::Align2::LEFT_TOP,
             text,
             egui::FontId::monospace(12.0),
             Color32::from_rgb(0xdd, 0xdd, 0xdd),
         );
-        ui.painter().text(
+        let hint = match state.tool {
+            Tool::Pan => "wheel slices · pinch or Option/Alt+wheel zoom · drag pans · right-drag windows · space plays · 0 fit · 1 1:1 · r/R rotate · h/v flip · i interpolation · w reset window",
+            Tool::Length => "Length: drag from one point to the other · Delete removes the last · Escape back to Pan",
+            Tool::Angle => "Angle: click the first ray end, the vertex, then the second ray end · Escape back to Pan",
+        };
+        painter.text(
             rect.left_bottom() + egui::vec2(8.0, -8.0),
             egui::Align2::LEFT_BOTTOM,
-            "wheel slices · pinch or Option/Alt+wheel zoom · drag pans · right-drag windows · 0 fit · 1 1:1 · r/R rotate · h/v flip · i interpolation · w reset window",
+            hint,
             egui::FontId::proportional(11.0),
             Color32::from_rgb(0x88, 0x88, 0x88),
         );
     }
+    drop_hint(ui, rect);
+}
+
+/// "Drop to open" while files hover over the window.
+fn drop_hint(ui: &Ui, rect: egui::Rect) {
+    let hovering = ui.input(|i| !i.raw.hovered_files.is_empty());
+    if hovering {
+        let painter = ui.painter_at(rect);
+        painter.rect_filled(rect, 0.0, Color32::from_black_alpha(160));
+        painter.text(
+            rect.center(),
+            egui::Align2::CENTER_CENTER,
+            "Drop a study folder, zip, DICOM files or an HL7 order",
+            egui::FontId::proportional(20.0),
+            Color32::WHITE,
+        );
+    }
+}
+
+/// A report as text, or a PDF handed to the system viewer.
+fn document_view(ui: &mut Ui, session: &mut Session, actions: &mut Actions) {
+    let mut back = false;
+    egui::Frame::new().inner_margin(12.0).show(ui, |ui| {
+        back = ui.button("Back to images").clicked();
+    });
+    if back {
+        session.close_document();
+        return;
+    }
+    let Some((_, content)) = &session.document else {
+        return;
+    };
+    egui::Frame::new()
+        .inner_margin(12.0)
+        .show(ui, |ui| match content {
+            DocumentContent::Failed(e) => banner(ui, DANGER, e),
+            DocumentContent::Report { title, text } => {
+                ui.heading(title);
+                egui::ScrollArea::both().id_salt("report").show(ui, |ui| {
+                    ui.add(egui::Label::new(RichText::new(text).monospace()).selectable(true));
+                });
+            }
+            DocumentContent::Pdf { title, bytes, mime } => {
+                ui.heading(title);
+                ui.label(format!(
+                    "{mime}, {} bytes. No PDF renderer is built in; the system viewer shows it.",
+                    bytes.len()
+                ));
+                ui.horizontal(|ui| {
+                    if ui.button("Open in system viewer").clicked() {
+                        actions.open_pdf = true;
+                    }
+                    if ui.button("Save PDF").clicked() {
+                        actions.save_pdf = true;
+                    }
+                });
+            }
+        });
 }
 
 // ---------------------------------------------------------------------------
@@ -407,6 +668,32 @@ fn series_panel(ui: &mut Ui, session: &mut Session, state: &mut UiState) {
     }
     if let Some(i) = select {
         session.show_slice(i, 0, true);
+    }
+    // Reports and PDFs found next to the images.
+    let docs: Vec<(usize, String)> = session
+        .set
+        .as_ref()
+        .map(|s| {
+            s.documents
+                .iter()
+                .enumerate()
+                .map(|(i, d)| (i, d.label()))
+                .collect()
+        })
+        .unwrap_or_default();
+    if !docs.is_empty() {
+        ui.separator();
+        ui.weak(format!("{} document(s)", docs.len()));
+        let open = session.document.as_ref().map(|(i, _)| *i);
+        let mut pick = None;
+        for (i, label) in docs {
+            if ui.selectable_label(open == Some(i), label).clicked() {
+                pick = Some(i);
+            }
+        }
+        if let Some(i) = pick {
+            session.open_document(i);
+        }
     }
 }
 

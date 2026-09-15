@@ -17,6 +17,7 @@ dicomscope-core = { path = "../dicomscope-core" }
 hl7kit = { path = "../../crates/hl7kit" }
 mwlkit = { path = "../../crates/mwlkit" }
 serde_json = "1"
+open = "5"
 # Native backends only; no WebGPU anywhere on the desktop.
 wgpu = { version = "30.0.1", default-features = false, features = ["std", "wgsl", "vulkan", "metal", "dx12", "gles"] }
 winit = "0.30.13"

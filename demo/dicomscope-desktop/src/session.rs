@@ -2,15 +2,18 @@
 //! winit so it can be tested on the host like the core it drives.
 
 use dicomscope_core::dicom::pixels::FrameInfo;
+use dicomscope_core::dicom::sr;
 use dicomscope_core::dicom::{self, Frame, Study, StudySet, TagRow};
 use dicomscope_core::fhir::{self, FhirInput};
 use dicomscope_core::link::{self, Chain, Linkage, WorklistKeys};
+use dicomscope_core::measure::Measurement;
 use dicomscope_core::thumbnail::{thumbnail, Thumbnail};
 use dicomscope_core::view::Viewport;
 use dicomscope_core::worklist::{self, WorklistOutput};
 use dicomscope_core::{fs, AppError};
 use hl7kit::order::{Order, OrderField};
 use hl7kit::{Message, Span};
+use std::collections::HashMap;
 
 /// Longest side of a series thumbnail, in pixels.
 pub const THUMB_SIZE: u32 = 96;
@@ -35,6 +38,23 @@ pub struct FhirText {
     pub bundle: String,
 }
 
+/// A report or PDF instance, decoded for display.
+pub enum DocumentContent {
+    Report {
+        title: String,
+        text: String,
+    },
+    Pdf {
+        title: String,
+        bytes: Vec<u8>,
+        mime: String,
+    },
+    Failed(String),
+}
+
+/// Cine playback rate when the file carries no Frame Time.
+pub const DEFAULT_FRAME_MS: f32 = 100.0;
+
 #[derive(Default)]
 pub struct Session {
     pub set: Option<StudySet>,
@@ -54,6 +74,15 @@ pub struct Session {
     pub chain: Option<Chain>,
     pub fhir: Option<FhirText>,
     pub error: Option<String>,
+    /// The document on screen instead of the image, if one was selected.
+    pub document: Option<(usize, DocumentContent)>,
+    /// Measurements per (file, frame), kept while scrolling.
+    marks: HashMap<(usize, u32), Vec<Measurement>>,
+    /// (file, frame) of the slice on screen.
+    key: (usize, u32),
+    pub playing: bool,
+    /// Time of the last cine step, in the UI clock's seconds.
+    last_tick: f64,
     /// Decoded but not yet uploaded to the GPU; the window loop takes it.
     pending: Option<Frame>,
     /// Size of the image area in device pixels, kept for refits.
@@ -92,11 +121,25 @@ impl Session {
 
     /// Open a folder, zip or file. Replaces the study; keeps the order.
     pub fn open_study(&mut self, path: &str) {
-        match fs::collect_inputs(path).map(StudySet::scan) {
+        self.open_study_paths(&[path.to_string()]);
+    }
+
+    /// Open several folders, zips or files as one study, as dropped onto
+    /// the window.
+    pub fn open_study_paths(&mut self, paths: &[String]) {
+        let path = paths.join(", ");
+        let inputs = paths.iter().try_fold(Vec::new(), |mut acc, p| {
+            acc.extend(fs::collect_inputs(p)?);
+            Ok::<_, String>(acc)
+        });
+        self.marks.clear();
+        self.playing = false;
+        self.document = None;
+        match inputs.map(StudySet::scan) {
             Ok(set) if !set.is_empty() => {
                 self.thumbs = (0..set.series.len()).map(|_| None).collect();
                 self.set = Some(set);
-                self.source = path.to_string();
+                self.source = path.clone();
                 self.error = None;
                 self.make_thumbnails();
                 self.show_slice(0, 0, true);
@@ -138,6 +181,8 @@ impl Session {
         };
         let (file, frame_index) = (s.file, s.frame);
         let name = set.files[file].name.clone();
+        self.key = (file, frame_index);
+        self.document = None;
         let loaded = set
             .bytes(file)
             .map_err(AppError::FileRead)
@@ -321,6 +366,126 @@ impl Session {
         }
         self.worklist = Some(worklist);
     }
+
+    /// Files dropped onto the window: `.hl7` and `.txt` are orders, the
+    /// rest is one study.
+    pub fn open_paths(&mut self, paths: &[String]) {
+        let is_order = |p: &String| {
+            let lower = p.to_ascii_lowercase();
+            lower.ends_with(".hl7") || lower.ends_with(".txt")
+        };
+        let (orders, studies): (Vec<String>, Vec<String>) =
+            paths.iter().cloned().partition(is_order);
+        if !studies.is_empty() {
+            self.open_study_paths(&studies);
+        }
+        if let Some(order) = orders.last() {
+            self.open_hl7(order);
+        }
+    }
+
+    // --- measurements ---
+
+    pub fn measurements(&self) -> &[Measurement] {
+        self.marks.get(&self.key).map(Vec::as_slice).unwrap_or(&[])
+    }
+
+    pub fn push_measurement(&mut self, m: Measurement) {
+        self.marks.entry(self.key).or_default().push(m);
+    }
+
+    pub fn remove_last_measurement(&mut self) {
+        if let Some(v) = self.marks.get_mut(&self.key) {
+            v.pop();
+        }
+    }
+
+    pub fn clear_measurements(&mut self) {
+        self.marks.remove(&self.key);
+    }
+
+    // --- cine ---
+
+    /// Milliseconds per frame: the file's Frame Time or Cine Rate, else a
+    /// default.
+    pub fn frame_ms(&self) -> f32 {
+        self.frame
+            .as_ref()
+            .and_then(|f| f.frame_time_ms)
+            .filter(|ms| *ms > 0.0)
+            .unwrap_or(DEFAULT_FRAME_MS)
+    }
+
+    pub fn toggle_cine(&mut self, now: f64) {
+        let has_slices = self
+            .set
+            .as_ref()
+            .and_then(|s| s.series.get(self.current.0))
+            .is_some_and(|s| s.slices.len() > 1);
+        self.playing = !self.playing && has_slices;
+        self.last_tick = now;
+    }
+
+    /// Advance when a frame period has passed; wraps at the end of the
+    /// series. `now` is the UI clock in seconds.
+    pub fn cine_tick(&mut self, now: f64) {
+        if !self.playing {
+            return;
+        }
+        let period = f64::from(self.frame_ms()) / 1000.0;
+        if now - self.last_tick < period {
+            return;
+        }
+        self.last_tick = now;
+        let (si, sl) = self.current;
+        let Some(n) = self
+            .set
+            .as_ref()
+            .and_then(|s| s.series.get(si))
+            .map(|s| s.slices.len())
+        else {
+            return;
+        };
+        self.show_slice(si, (sl + 1) % n.max(1), false);
+    }
+
+    // --- documents ---
+
+    /// Decode a report or PDF from the study's document list and show it
+    /// instead of the image.
+    pub fn open_document(&mut self, index: usize) {
+        let Some(set) = &self.set else { return };
+        let Some(doc) = set.documents.get(index) else {
+            return;
+        };
+        let title = doc.title.clone();
+        let content = match set
+            .bytes(doc.file)
+            .map_err(AppError::FileRead)
+            .and_then(|b| dicom::load(&b))
+        {
+            Err(e) => DocumentContent::Failed(format!("{}: {e}", set.files[doc.file].name)),
+            Ok(obj) => match sr::document_kind(&obj) {
+                Some(sr::DocumentKind::EncapsulatedPdf) => match sr::encapsulated_document(&obj) {
+                    Some((bytes, mime)) => DocumentContent::Pdf { title, bytes, mime },
+                    None => DocumentContent::Failed(
+                        "Encapsulated PDF without an Encapsulated Document element".into(),
+                    ),
+                },
+                _ => DocumentContent::Report {
+                    title,
+                    text: sr::sr_to_text(&sr::render_sr(&obj)),
+                },
+            },
+        };
+        self.playing = false;
+        self.document = Some((index, content));
+    }
+
+    /// Back from a document to the image.
+    pub fn close_document(&mut self) {
+        self.document = None;
+    }
 }
 
 #[cfg(test)]
@@ -361,6 +526,58 @@ mod tests {
             .fhir
             .as_ref()
             .is_some_and(|f| f.bundle.contains("\"Bundle\"")));
+    }
+
+    #[test]
+    fn cine_steps_on_the_clock_and_measurements_stay_with_their_slice() {
+        let dir =
+            std::env::temp_dir().join(format!("dicomscope-desktop-cine-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("mf.dcm");
+        std::fs::write(
+            &path,
+            Synthetic {
+                frames: 3,
+                ..Synthetic::default()
+            }
+            .build(),
+        )
+        .unwrap();
+        let mut s = Session::default();
+        s.set_canvas((100, 100));
+        s.open_study(&path.display().to_string());
+        assert!(s.error.is_none(), "{:?}", s.error);
+        assert_eq!(s.set.as_ref().unwrap().series[0].slices.len(), 3);
+
+        s.push_measurement(Measurement::Length {
+            a: (0.0, 0.0),
+            b: (3.0, 4.0),
+        });
+        assert_eq!(s.measurements().len(), 1);
+        assert_eq!(s.measurements()[0].label(None), "5 px");
+
+        s.toggle_cine(0.0);
+        assert!(s.playing);
+        s.cine_tick(0.05);
+        assert_eq!(s.current, (0, 0), "no step before a frame period");
+        s.cine_tick(0.2);
+        assert_eq!(s.current, (0, 1));
+        assert!(
+            s.measurements().is_empty(),
+            "marks belong to the slice they were drawn on"
+        );
+        s.cine_tick(0.4);
+        s.cine_tick(0.6);
+        assert_eq!(s.current, (0, 0), "wraps at the end of the series");
+        assert_eq!(s.measurements().len(), 1);
+        s.remove_last_measurement();
+        assert!(s.measurements().is_empty());
+        s.toggle_cine(0.7);
+        assert!(!s.playing);
+
+        // Dropping an order file next to the study loads both.
+        s.open_paths(&[format!("{SAMPLES}/order.hl7")]);
+        assert!(s.hl7.is_some() && s.linkage.is_some());
     }
 
     #[test]
