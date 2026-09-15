@@ -654,10 +654,11 @@ pub fn App() -> impl IntoView {
             let _ = div.focus();
         }
     };
-    // Wheel scrolls slices when there are several; Ctrl/Cmd+wheel, or wheel
+    // Wheel scrolls slices when there are several; Alt/Option+wheel, a
+    // trackpad pinch (which the browser delivers as Ctrl+wheel), or wheel
     // on a single image, zooms.
     let on_wheel = move |ev: WheelEvent| {
-        if slice_count() > 1 && !ev.ctrl_key() && !ev.meta_key() {
+        if slice_count() > 1 && !ev.ctrl_key() && !ev.meta_key() && !ev.alt_key() {
             ev.prevent_default();
             step_slice(if ev.delta_y() > 0.0 { 1 } else { -1 }, false);
         } else if let Some(canvas) = canvas_ref.get_untracked() {
@@ -783,7 +784,7 @@ pub fn App() -> impl IntoView {
                         <button type="button" on:click=move |_| controls.remove_last_measurement()>"Undo"</button>
                         <button type="button" on:click=move |_| controls.clear_measurements()>"Clear"</button>
                         <small class="hint">"Length: drag. Angle: click three points. Delete removes the last, Escape returns to Pan. \
-                            Wheel scrolls slices (Ctrl/Cmd+wheel zooms) · drag pans · arrows move · PageUp/PageDown, Home/End · space plays · 0 fit · 1 is 1:1 · r/R rotate · h/v flip · i interpolation"</small>
+                            Wheel scrolls slices (pinch or Alt/Option+wheel zooms) · drag pans · arrows move · PageUp/PageDown, Home/End · space plays · 0 fit · 1 is 1:1 · r/R rotate · h/v flip · i interpolation"</small>
                     </div>
                     <SeriesPanel set=Signal::derive(move || study_set.get())
                         thumbs=Signal::derive(move || thumbs.get())

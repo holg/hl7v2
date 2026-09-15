@@ -202,14 +202,24 @@ fn image_area(ui: &mut Ui, session: &mut Session, state: &mut UiState, actions: 
             );
         }
     }
-    // Wheel: slices; with Ctrl or Cmd, zoom about the pointer.
+    // Wheel: slices. Zoom is a trackpad pinch or Option/Alt+wheel, never
+    // Ctrl+wheel: on macOS that is the system accessibility zoom and does
+    // not reach the application.
     if response.hovered() {
-        let (scroll, modifiers, pointer) =
-            ui.input(|i| (i.smooth_scroll_delta, i.modifiers, i.pointer.hover_pos()));
-        if scroll.y != 0.0 {
-            if modifiers.command || modifiers.ctrl {
+        let (scroll, zoom, modifiers, pointer) = ui.input(|i| {
+            (
+                i.smooth_scroll_delta,
+                i.zoom_delta(),
+                i.modifiers,
+                i.pointer.hover_pos(),
+            )
+        });
+        let p = pointer.unwrap_or(rect.center()) - rect.min;
+        if zoom != 1.0 {
+            session.view = session.view.zoom_about(zoom, p.x * ppp, p.y * ppp);
+        } else if scroll.y != 0.0 {
+            if modifiers.alt {
                 let factor = if scroll.y > 0.0 { 1.1 } else { 1.0 / 1.1 };
-                let p = pointer.unwrap_or(rect.center()) - rect.min;
                 session.view = session.view.zoom_about(factor, p.x * ppp, p.y * ppp);
             } else {
                 state.scroll_accum += scroll.y;
@@ -326,7 +336,7 @@ fn image_area(ui: &mut Ui, session: &mut Session, state: &mut UiState, actions: 
         ui.painter().text(
             rect.left_bottom() + egui::vec2(8.0, -8.0),
             egui::Align2::LEFT_BOTTOM,
-            "wheel slices · Ctrl+wheel zoom · drag pans · right-drag windows · 0 fit · 1 1:1 · r/R rotate · h/v flip · i interpolation · w reset window",
+            "wheel slices · pinch or Option/Alt+wheel zoom · drag pans · right-drag windows · 0 fit · 1 1:1 · r/R rotate · h/v flip · i interpolation · w reset window",
             egui::FontId::proportional(11.0),
             Color32::from_rgb(0x88, 0x88, 0x88),
         );

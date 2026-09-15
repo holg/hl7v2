@@ -46,7 +46,7 @@ no-network guarantee has to be auditable, not promised; see below.
    and every DICOM tag is listed with a filter.
 
 Viewer controls: the mouse wheel scrolls through the slices of the current
-series (Ctrl/Cmd+wheel zooms at the cursor; on a single image the wheel zooms).
+series (a trackpad pinch or Alt/Option+wheel zooms at the cursor; on a single image the wheel zooms). Ctrl+wheel is not used on purpose: on macOS it is the system accessibility zoom.
 Dragging pans, double-click fits. With the viewer focused (click it), the arrow
 keys move the image (Shift for larger steps), PageUp/PageDown step slices and
 Home/End jump to the ends, `+`/`-` zoom, `0` fits, `1` shows one image pixel
@@ -230,8 +230,8 @@ create the surface and handle input.
 cargo run --release -p dicomscope-desktop -- samples/anonymized-demo-clean.zip
 ```
 
-Wheel or Up/Down scroll slices, PageUp/PageDown switch series, Ctrl+wheel or
-+/- zoom, drag pans, right-drag windows, 0 fits, 1 is 1:1, r/R rotate, h/v
+Wheel or Up/Down scroll slices, PageUp/PageDown switch series, a trackpad
+pinch, Option/Alt+wheel or +/- zoom, drag pans, right-drag windows, 0 fits, 1 is 1:1, r/R rotate, h/v
 flip, i toggles interpolation, w resets the window. `WGPU_BACKEND=gl` forces
 OpenGL on a machine without a working Vulkan driver. The panels are egui:
 series with thumbnails, window sliders, the tag tree with filter, the HL7
