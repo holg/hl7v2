@@ -24,5 +24,9 @@ zip = { version = "7.2.0", default-features = false, features = ["deflate"] }
 # Backends are chosen by the app: `webgpu` in the browser, native ones on the desktop.
 wgpu = { version = "30.0.1", default-features = false, features = ["std", "wgsl"] }
 
+[features]
+# Exposes dicom::testutil, the synthetic Part 10 builder, to other crates' tests.
+test-support = []
+
 [dev-dependencies]
 naga = { version = "30.0.1", features = ["wgsl-in"] }

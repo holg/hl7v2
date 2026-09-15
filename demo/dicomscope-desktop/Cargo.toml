@@ -25,3 +25,6 @@ egui = "0.36.2"
 egui-wgpu = "0.36.2"
 egui-winit = { version = "0.36.2", default-features = false, features = ["clipboard", "links", "wayland", "x11"] }
 rfd = { version = "0.15", default-features = false, features = ["xdg-portal", "async-std"] }
+
+[dev-dependencies]
+dicomscope-core = { path = "../dicomscope-core", features = ["test-support"] }

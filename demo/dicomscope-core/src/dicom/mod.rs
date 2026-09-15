@@ -240,8 +240,10 @@ mod tests {
     }
 }
 
-#[cfg(test)]
-pub(crate) mod testutil {
+/// In-memory Part 10 files for tests. Public behind the `test-support`
+/// feature so the apps' tests can build a study without a sample on disk.
+#[cfg(any(test, feature = "test-support"))]
+pub mod testutil {
     //! Build Part 10 files in memory so the whole DICOM path runs on the host.
 
     use dicom_core::{DataElement, PrimitiveValue, VR};

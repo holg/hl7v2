@@ -327,16 +327,29 @@ impl Session {
 mod tests {
     use super::*;
 
+    use dicomscope_core::dicom::testutil::Synthetic;
+
     const SAMPLES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../samples");
+
+    /// A one-file study on disk, built in memory: the DICOM samples are not
+    /// committed, the HL7 orders are.
+    fn synthetic_study(name: &str) -> String {
+        let dir =
+            std::env::temp_dir().join(format!("dicomscope-desktop-{name}-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("1.dcm");
+        std::fs::write(&path, Synthetic::default().build()).unwrap();
+        path.display().to_string()
+    }
 
     #[test]
     fn study_and_order_derive_linkage_worklist_and_fhir() {
         let mut s = Session::default();
         s.set_canvas((800, 600));
-        s.open_study(&format!("{SAMPLES}/dicom/CT_small.dcm"));
+        s.open_study(&synthetic_study("session"));
         assert!(s.error.is_none(), "{:?}", s.error);
         assert!(s.take_pending_frame().is_some());
-        assert_eq!(s.image(), Some((128, 128)));
+        assert_eq!(s.image(), Some((3, 2)));
         assert!(!s.tags.is_empty());
         assert_eq!(s.thumbs.len(), 1);
         s.open_hl7(&format!("{SAMPLES}/order.hl7"));
