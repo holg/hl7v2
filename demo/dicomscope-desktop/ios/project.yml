@@ -1,0 +1,72 @@
+# xcodegen spec for the iPad build. `xcodegen generate` writes the Xcode
+# project; the Rust library is built by a script phase and linked in. The
+# generated project and the build folder are not committed.
+name: dicomscope
+options:
+  createIntermediateGroups: true
+  deploymentTarget:
+    iOS: "15.0"
+settings:
+  base:
+    DEVELOPMENT_TEAM: U4GT5CZ7J7
+    CODE_SIGN_STYLE: Automatic
+    ENABLE_BITCODE: "NO"
+targets:
+  dicomscope:
+    type: application
+    platform: iOS
+    deploymentTarget: "15.0"
+    sources:
+      - main.c
+    info:
+      path: Info.plist
+      properties:
+        CFBundleDisplayName: dicomscope
+        CFBundleShortVersionString: "0.1.0"
+        CFBundleVersion: "1"
+        UILaunchScreen: {}
+        UIRequiresFullScreen: true
+        UIStatusBarHidden: true
+        UIViewControllerBasedStatusBarAppearance: false
+        # The app's Documents folder shows up in Finder and the Files app:
+        # that is how studies and orders get onto the iPad.
+        UIFileSharingEnabled: true
+        LSSupportsOpeningDocumentsInPlace: true
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+        UIRequiredDeviceCapabilities: [arm64, metal]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: eu.iesna.dicomscope
+        TARGETED_DEVICE_FAMILY: "2"
+        LIBRARY_SEARCH_PATHS:
+          - "$(SRCROOT)/../../../target/aarch64-apple-ios/release"
+        OTHER_LDFLAGS:
+          - "-ldicomscope_desktop"
+          - "-framework"
+          - UIKit
+          - "-framework"
+          - Metal
+          - "-framework"
+          - QuartzCore
+          - "-framework"
+          - CoreGraphics
+          - "-framework"
+          - Foundation
+          - "-framework"
+          - CoreFoundation
+          - "-framework"
+          - Security
+    preBuildScripts:
+      - name: Build the Rust library
+        shell: /bin/sh
+        script: |
+          set -e
+          export PATH="$HOME/.cargo/bin:$PATH"
+          cd "$SRCROOT/../../.."
+          cargo build --release -p dicomscope-desktop --lib --target aarch64-apple-ios
+        outputFiles:
+          - "$(SRCROOT)/../../../target/aarch64-apple-ios/release/libdicomscope_desktop.a"

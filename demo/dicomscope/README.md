@@ -243,6 +243,38 @@ message with the order fields highlighted, the linkage table, the worklist
 item with its chain view and a save button, and the FHIR resources with copy
 and save. A study path and an order path can be given on the command line.
 
+## iPad build
+
+The desktop crate also builds as a static library for `aarch64-apple-ios`,
+and `demo/dicomscope-desktop/ios/` holds an xcodegen spec that wraps it in a
+signed iPad app: a four-line C `main` calls the Rust entry point, winit runs
+the UIKit application, wgpu renders on Metal. Needs an iPad with Metal (2013
+or later) on iOS 15 or newer; verified on an iPad Pro 10.5" (A10X) on iOS 17.
+
+```sh
+rustup target add aarch64-apple-ios
+cd demo/dicomscope-desktop/ios
+xcodegen generate                              # once, and after editing project.yml
+xcodebuild -project dicomscope.xcodeproj -scheme dicomscope -configuration Release \
+  -destination "id=<device UDID>" -allowProvisioningUpdates -derivedDataPath build build
+ios-deploy --id <device UDID> --bundle build/Build/Products/Release-iphoneos/dicomscope.app
+```
+
+`project.yml` names the development team; change it to yours. Files reach
+the app through its Documents folder, which Finder and the Files app show
+as "dicomscope": copy a study (folder, zip or `.dcm` files) and an `.hl7`
+order there, then tap Reload, or push them from the Mac:
+
+```sh
+ios-deploy --id <UDID> --bundle_id eu.iesna.dicomscope --upload study.zip --to Documents/study.zip
+```
+
+Touch: one-finger drag pans, pinch zooms, the slice slider in the Series
+panel scrolls. What is still desktop-shaped on the iPad: the file dialogs
+(no document picker yet, hence the Documents folder), right-drag windowing
+(use the sliders), and the panel widths. See `src/platform.rs` for the
+complete list of what differs; everything else is the same code.
+
 ## Supported transfer syntaxes
 
 Pixel decoding is dicom-rs (`dicom-pixeldata` with the `native`, `jpeg`, `rle`

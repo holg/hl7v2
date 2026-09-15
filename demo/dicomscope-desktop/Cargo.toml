@@ -8,6 +8,10 @@ license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 
+[lib]
+name = "dicomscope_desktop"
+crate-type = ["rlib", "staticlib"]
+
 [[bin]]
 name = "dicomscope-desktop"
 path = "src/main.rs"
@@ -17,15 +21,21 @@ dicomscope-core = { path = "../dicomscope-core" }
 hl7kit = { path = "../../crates/hl7kit" }
 mwlkit = { path = "../../crates/mwlkit" }
 serde_json = "1"
-open = "5"
 # Native backends only; no WebGPU anywhere on the desktop.
 wgpu = { version = "30.0.1", default-features = false, features = ["std", "wgsl", "vulkan", "metal", "dx12", "gles"] }
 winit = "0.30.13"
 pollster = "0.4"
 egui = "0.36.2"
 egui-wgpu = "0.36.2"
+
+# Desktop only: dialogs, opening files externally, clipboard and links.
+[target.'cfg(not(target_os = "ios"))'.dependencies]
 egui-winit = { version = "0.36.2", default-features = false, features = ["clipboard", "links", "wayland", "x11"] }
 rfd = { version = "0.15", default-features = false, features = ["xdg-portal", "async-std"] }
+open = "5"
+
+[target.'cfg(target_os = "ios")'.dependencies]
+egui-winit = { version = "0.36.2", default-features = false }
 
 [dev-dependencies]
 dicomscope-core = { path = "../dicomscope-core", features = ["test-support"] }

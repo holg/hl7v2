@@ -21,6 +21,8 @@ pub struct Actions {
     pub save_fhir: bool,
     pub open_pdf: bool,
     pub save_pdf: bool,
+    /// Re-scan the platform's document folder (iOS).
+    pub reload: bool,
     /// The image area in physical pixels, if a study is shown.
     pub image_rect: Option<(u32, u32, u32, u32)>,
 }
@@ -114,6 +116,9 @@ pub fn draw(root: &mut Ui, session: &mut Session, state: &mut UiState) -> Action
             }
             if ui.button("Open HL7 order").clicked() {
                 actions.open_hl7 = true;
+            }
+            if cfg!(target_os = "ios") && ui.button("Reload").clicked() {
+                actions.reload = true;
             }
             ui.separator();
             for (t, label) in [
@@ -668,6 +673,24 @@ fn series_panel(ui: &mut Ui, session: &mut Session, state: &mut UiState) {
     }
     if let Some(i) = select {
         session.show_slice(i, 0, true);
+    }
+    // Slice slider: the touch and trackpad way through a series.
+    let (si, sl) = session.current;
+    let n = session
+        .set
+        .as_ref()
+        .and_then(|s| s.series.get(si))
+        .map(|s| s.slices.len())
+        .unwrap_or(0);
+    if n > 1 {
+        let mut pos = sl + 1;
+        if ui
+            .add(egui::Slider::new(&mut pos, 1..=n).text("slice"))
+            .changed()
+            && pos - 1 != sl
+        {
+            session.show_slice(si, pos - 1, false);
+        }
     }
     // Reports and PDFs found next to the images.
     let docs: Vec<(usize, String)> = session
