@@ -3,15 +3,15 @@ name: python
 # Builds and publishes the Python wheels for the two PyO3 binding crates,
 # crates/hl7kit-py (PyPI: hl7kit) and crates/mwlkit-py (PyPI: mwlkit).
 #
-# Branches and pull requests build everything and publish nothing. A push to
-# main additionally publishes both packages to TestPyPI. A tag
+# Branches, pull requests and pushes to main build and test everything and
+# publish nothing. A tag
 # hl7kit-py-vX.Y.Z or mwlkit-py-vX.Y.Z publishes that one package to PyPI
 # with attestations and creates a GitHub release carrying the same files.
 # Both packages are always built, because mwlkit's smoke test installs the
 # hl7kit wheel from the same run, never from an index.
 #
-# Credentials: PyPI and TestPyPI Trusted Publishing (OIDC) through the
-# `pypi` and `testpypi` GitHub environments. No tokens, no secrets.
+# Credentials: PyPI Trusted Publishing (OIDC) through the `pypi` GitHub
+# environment. No tokens, no secrets.
 # See RELEASING.md.
 
 on:
@@ -329,33 +329,6 @@ jobs:
           if-no-files-found: error
 
   # ---------------------------------------------------------------------
-  publish-testpypi:
-    name: publish to TestPyPI
-    needs: [versions, wheels-hl7kit, wheels-mwlkit, sdist]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
-    environment:
-      name: testpypi
-      url: https://test.pypi.org/project/hl7kit/
-    permissions:
-      id-token: write
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          pattern: "wheels-*"
-          merge-multiple: true
-          path: dist
-      - uses: actions/download-artifact@v4
-        with:
-          pattern: "sdist-*"
-          merge-multiple: true
-          path: dist
-      - run: ls -la dist
-      - uses: pypa/gh-action-pypi-publish@release/v1
-        with:
-          repository-url: https://test.pypi.org/legacy/
-          skip-existing: true
-
   publish-pypi:
     name: publish ${{ needs.versions.outputs.release_crate }} to PyPI
     needs: [versions, wheels-hl7kit, wheels-mwlkit, sdist]

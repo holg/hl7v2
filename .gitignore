@@ -7,3 +7,9 @@
 /samples/anonymized-demo*.zip
 /samples/anonymized-demo/
 /tmp/
+# Sample studies and orders beyond the committed fixtures: freely available
+# elsewhere, but not redistributed from here until licensing is settled.
+/samples/*.zip
+/samples/*.dcm
+/samples/dvt_*.hl7
+/samples/opg_*.hl7
