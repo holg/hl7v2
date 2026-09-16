@@ -25,11 +25,9 @@ and refuses a tag whose version differs from the crate's.
    The Python package version does not have to equal the Rust crate's
    version, but keeping them in lockstep (hl7kit 0.2.x wheels wrap hl7kit
    0.2.x) is the convention.
-2. Commit, push to `main`, and let the `python` workflow go green. On that
-   push it also publishes both packages to **TestPyPI** (`skip-existing`, so
-   re-runs are harmless). Check
-   `pip install --index-url https://test.pypi.org/simple/ --extra-index-url https://pypi.org/simple/ hl7kit==X.Y.Z`
-   on a machine that matters.
+2. Commit, push to `main`, and let the `python` workflow go green: it builds
+   every wheel and runs the test suite against each one, but publishes
+   nothing from a branch.
 3. Tag and push:
 
    ```sh
@@ -52,8 +50,9 @@ emulation and not smoke-tested.
 
 ## One-time setup (done once per package, by the repository owner)
 
-Trusted Publishing needs a "pending publisher" on PyPI and on TestPyPI for
-each package, and the two GitHub environments the workflow names.
+Trusted Publishing needs a "pending publisher" on PyPI for each package,
+and the GitHub environment the workflow names. Both packages are published
+since 2026-09-16; the entries exist.
 
 PyPI (https://pypi.org/manage/account/publishing/), one entry per package:
 
@@ -62,13 +61,9 @@ PyPI (https://pypi.org/manage/account/publishing/), one entry per package:
 | `hl7kit` | `holg` | `hl7v2` | `python.yml` | `pypi` |
 | `mwlkit` | `holg` | `hl7v2` | `python.yml` | `pypi` |
 
-TestPyPI (https://test.pypi.org/manage/account/publishing/), same two
-entries with environment name `testpypi`.
-
-GitHub: Settings > Environments, create `pypi` and `testpypi`. Recommended:
-on `pypi`, restrict deployment branches and tags to `hl7kit-py-v*` and
-`mwlkit-py-v*` and add yourself as a required reviewer; on `testpypi`,
-restrict to `main`.
+GitHub: Settings > Environments, `pypi` (created on first use). Recommended:
+restrict its deployment branches and tags to `hl7kit-py-v*` and
+`mwlkit-py-v*` and add yourself as a required reviewer.
 
 ## Rust crates
 
