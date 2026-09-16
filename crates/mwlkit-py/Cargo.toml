@@ -1,0 +1,20 @@
+[package]
+name = "mwlkit-py"
+version = "0.1.0"          # lockstep with pyproject.toml; CI checks it
+edition = "2021"
+publish = false
+license = "MIT OR Apache-2.0"
+
+[workspace]
+
+[lib]
+name = "mwlkit_native"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+hl7kit = { path = "../hl7kit", version = "0.2" }
+mwlkit = { path = "../mwlkit", version = "0.1" }
+dicom-core = "0.10.0"
+dicom-object = "0.10.0"
+dicom-dictionary-std = "0.10.0"
+pyo3 = { version = "0.29", features = ["abi3-py39"] }

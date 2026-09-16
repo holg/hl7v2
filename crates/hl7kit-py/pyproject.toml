@@ -1,0 +1,39 @@
+[build-system]
+requires = ["maturin>=1.7,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "hl7kit"
+version = "0.2.0"
+description = "HL7 v2.x parser with byte spans and imaging-order linkage (Accession, RP ID, SPS ID, Study Instance UID with source and conflict warnings)."
+readme = "README.md"
+license = { text = "MIT OR Apache-2.0" }
+requires-python = ">=3.9"
+authors = [{ name = "Holger Trahe" }]
+keywords = ["hl7", "hl7v2", "dicom", "radiology", "ris", "pacs", "imaging"]
+classifiers = [
+  "Programming Language :: Rust",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: Implementation :: CPython",
+  "Topic :: Scientific/Engineering :: Medical Science Apps.",
+  "Operating System :: OS Independent",
+  "Typing :: Typed",
+]
+dependencies = []               # zero runtime deps: installs behind any hospital mirror
+
+[project.optional-dependencies]
+test = ["pytest>=7"]
+
+[project.scripts]
+hl7kit = "hl7kit.cli:main"      # `hl7kit inspect order.hl7`
+
+[project.urls]
+Repository = "https://github.com/holg/hl7v2"
+Documentation = "https://docs.rs/hl7kit"
+Demo = "https://holg.github.io/hl7v2/"
+
+[tool.maturin]
+python-source = "python"        # python/hl7kit/__init__.py wraps the extension
+module-name = "hl7kit._native"  # extension lands inside the package
+features = ["pyo3/extension-module"]
+strip = true

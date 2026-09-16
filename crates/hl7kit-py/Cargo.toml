@@ -1,0 +1,21 @@
+[package]
+name = "hl7kit-py"
+version = "0.2.0"          # lockstep with pyproject.toml; CI checks it
+edition = "2021"
+publish = false            # wheels only, never crates.io
+license = "MIT OR Apache-2.0"
+
+# Standalone package, not a member of the repository's Rust workspace: the
+# workspace CI (cargo --workspace) must not need a Python toolchain.
+[workspace]
+
+[lib]
+name = "hl7kit_native"     # -> python module hl7kit._native (see pyproject)
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+hl7kit = { path = "../hl7kit", version = "0.2" }
+# abi3-py39: one wheel per platform serves Python 3.9 .. 3.13+. The
+# extension-module feature is enabled by maturin (pyproject.toml), not
+# here, so `cargo test` can link against a host interpreter.
+pyo3 = { version = "0.29", features = ["abi3-py39"] }
