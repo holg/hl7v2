@@ -1,0 +1,391 @@
+name: python
+
+# Builds and publishes the Python wheels for the two PyO3 binding crates,
+# crates/hl7kit-py (PyPI: hl7kit) and crates/mwlkit-py (PyPI: mwlkit).
+#
+# Branches and pull requests build everything and publish nothing. A push to
+# main additionally publishes both packages to TestPyPI. A tag
+# hl7kit-py-vX.Y.Z or mwlkit-py-vX.Y.Z publishes that one package to PyPI
+# with attestations and creates a GitHub release carrying the same files.
+# Both packages are always built, because mwlkit's smoke test installs the
+# hl7kit wheel from the same run, never from an index.
+#
+# Credentials: PyPI and TestPyPI Trusted Publishing (OIDC) through the
+# `pypi` and `testpypi` GitHub environments. No tokens, no secrets.
+# See RELEASING.md.
+
+on:
+  pull_request:
+    paths:
+      - "crates/hl7kit/**"
+      - "crates/mwlkit/**"
+      - "crates/hl7kit-py/**"
+      - "crates/mwlkit-py/**"
+      - ".github/workflows/python.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "crates/hl7kit/**"
+      - "crates/mwlkit/**"
+      - "crates/hl7kit-py/**"
+      - "crates/mwlkit-py/**"
+      - ".github/workflows/python.yml"
+    tags:
+      - "hl7kit-py-v*"
+      - "mwlkit-py-v*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  # abi3-py39: the wheels are built with a 3.9 interpreter so the ABI floor
+  # is proven, then smoke-tested on the same 3.9.
+  PYTHON_FLOOR: "3.9"
+
+jobs:
+  # ---------------------------------------------------------------------
+  versions:
+    name: versions agree
+    runs-on: ubuntu-latest
+    outputs:
+      # The crate a tag selects for PyPI, empty on branches.
+      release_crate: ${{ steps.check.outputs.release_crate }}
+      release_version: ${{ steps.check.outputs.release_version }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Cargo.toml and pyproject.toml versions match, and the tag if any
+        id: check
+        shell: python
+        run: |
+          import os, re, sys, tomllib
+          crates = {"hl7kit-py": "hl7kit", "mwlkit-py": "mwlkit"}
+          versions = {}
+          for crate in crates:
+              cargo = tomllib.load(open(f"crates/{crate}/Cargo.toml", "rb"))["package"]["version"]
+              pyproj = tomllib.load(open(f"crates/{crate}/pyproject.toml", "rb"))["project"]["version"]
+              if cargo != pyproj:
+                  sys.exit(f"{crate}: Cargo.toml says {cargo}, pyproject.toml says {pyproj}")
+              versions[crate] = cargo
+              print(f"{crate}: {cargo}")
+          ref = os.environ["GITHUB_REF"]
+          release_crate, release_version = "", ""
+          if ref.startswith("refs/tags/"):
+              tag = ref[len("refs/tags/"):]
+              m = re.fullmatch(r"(hl7kit-py|mwlkit-py)-v(.+)", tag)
+              if not m:
+                  sys.exit(f"tag {tag} is not hl7kit-py-vX.Y.Z or mwlkit-py-vX.Y.Z")
+              release_crate, release_version = m.group(1), m.group(2)
+              if versions[release_crate] != release_version:
+                  sys.exit(f"tag {tag} but crates/{release_crate} is at {versions[release_crate]}")
+              print(f"release: {release_crate} {release_version}")
+          with open(os.environ["GITHUB_OUTPUT"], "a") as out:
+              out.write(f"release_crate={release_crate}\n")
+              out.write(f"release_version={release_version}\n")
+
+  # ---------------------------------------------------------------------
+  rust:
+    name: rust checks
+    needs: versions
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            . -> target
+            crates/hl7kit-py -> target
+            crates/mwlkit-py -> target
+      # The binding crates' unit tests link against a host interpreter
+      # (extension-module is a maturin-only feature).
+      - uses: actions/setup-python@v5
+        id: py
+        with:
+          python-version: "3.12"
+      - name: Library crates
+        run: |
+          cargo fmt -p hl7kit -p mwlkit -- --check
+          cargo clippy -p hl7kit -p mwlkit --all-targets -- -D warnings
+          cargo test -p hl7kit -p mwlkit
+      - name: Binding crates
+        env:
+          PYO3_PYTHON: ${{ steps.py.outputs.python-path }}
+        run: |
+          libdir="$("$PYO3_PYTHON" -c 'import sysconfig; print(sysconfig.get_config_var("LIBDIR"))')"
+          export LD_LIBRARY_PATH="$libdir${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+          for crate in hl7kit-py mwlkit-py; do
+            echo "::group::$crate"
+            ( cd "crates/$crate" && cargo fmt -- --check && cargo clippy --all-targets -- -D warnings && cargo test )
+            echo "::endgroup::"
+          done
+
+  # ---------------------------------------------------------------------
+  # One job per crate, so mwlkit's smoke test can wait for hl7kit's wheel.
+  wheels-hl7kit:
+    name: hl7kit wheel ${{ matrix.id }}
+    needs: rust
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: manylinux_2_28-x86_64
+            os: ubuntu-latest
+            target: x86_64
+            manylinux: "2_28"
+            interpreter: python3.9
+            smoke: native
+          - id: manylinux_2_28-aarch64
+            os: ubuntu-latest
+            target: aarch64
+            manylinux: "2_28"
+            interpreter: python3.9
+            smoke: none
+          - id: musllinux_1_2-x86_64
+            os: ubuntu-latest
+            target: x86_64
+            manylinux: musllinux_1_2
+            interpreter: python3.9
+            smoke: alpine
+          - id: macos-universal2
+            os: macos-14
+            target: universal2-apple-darwin
+            manylinux: auto
+            interpreter: setup-python
+            smoke: native
+          - id: windows-x64
+            os: windows-latest
+            target: x64
+            manylinux: auto
+            interpreter: setup-python
+            smoke: native
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        id: py
+        with:
+          python-version: ${{ env.PYTHON_FLOOR }}
+      - name: Interpreter for maturin
+        id: interp
+        shell: bash
+        run: |
+          if [ "${{ matrix.interpreter }}" = "setup-python" ]; then
+            echo "path=${{ steps.py.outputs.python-path }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "path=${{ matrix.interpreter }}" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Build wheel
+        uses: PyO3/maturin-action@v1
+        with:
+          working-directory: crates/hl7kit-py
+          target: ${{ matrix.target }}
+          manylinux: ${{ matrix.manylinux }}
+          args: --release --out dist --interpreter ${{ steps.interp.outputs.path }}
+          sccache: true
+      - name: Exactly one wheel
+        shell: bash
+        run: |
+          ls -la crates/hl7kit-py/dist
+          test "20 20 101 12 61 79 80 81 98 707 703 704 706 708 702 701 33find crates/hl7kit-py/dist -name '*.whl' | wc -l)" -eq 1
+      - name: Smoke test (native)
+        if: matrix.smoke == 'native'
+        shell: bash
+        run: |
+          "${{ steps.py.outputs.python-path }}" -m pip install --upgrade pip
+          "${{ steps.py.outputs.python-path }}" -m pip install --only-binary=:all: --find-links crates/hl7kit-py/dist "hl7kit[test]"
+          "${{ steps.py.outputs.python-path }}" -m pip show hl7kit
+          "${{ steps.py.outputs.python-path }}" -m pytest -q crates/hl7kit-py/tests
+      - name: Smoke test (musllinux, in Alpine)
+        if: matrix.smoke == 'alpine'
+        run: |
+          docker run --rm -v "$PWD:/w" -w /w python:${{ env.PYTHON_FLOOR }}-alpine sh -ec '
+            pip install --only-binary=:all: --find-links crates/hl7kit-py/dist "hl7kit[test]"
+            pip show hl7kit
+            pytest -q crates/hl7kit-py/tests'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheels-hl7kit-py-${{ matrix.id }}
+          path: crates/hl7kit-py/dist/*.whl
+          if-no-files-found: error
+
+  wheels-mwlkit:
+    name: mwlkit wheel ${{ matrix.id }}
+    needs: wheels-hl7kit
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: manylinux_2_28-x86_64
+            os: ubuntu-latest
+            target: x86_64
+            manylinux: "2_28"
+            interpreter: python3.9
+            smoke: native
+          - id: manylinux_2_28-aarch64
+            os: ubuntu-latest
+            target: aarch64
+            manylinux: "2_28"
+            interpreter: python3.9
+            smoke: none
+          - id: musllinux_1_2-x86_64
+            os: ubuntu-latest
+            target: x86_64
+            manylinux: musllinux_1_2
+            interpreter: python3.9
+            smoke: alpine
+          - id: macos-universal2
+            os: macos-14
+            target: universal2-apple-darwin
+            manylinux: auto
+            interpreter: setup-python
+            smoke: native
+          - id: windows-x64
+            os: windows-latest
+            target: x64
+            manylinux: auto
+            interpreter: setup-python
+            smoke: native
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        id: py
+        with:
+          python-version: ${{ env.PYTHON_FLOOR }}
+      - name: Interpreter for maturin
+        id: interp
+        shell: bash
+        run: |
+          if [ "${{ matrix.interpreter }}" = "setup-python" ]; then
+            echo "path=${{ steps.py.outputs.python-path }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "path=${{ matrix.interpreter }}" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Build wheel
+        uses: PyO3/maturin-action@v1
+        with:
+          working-directory: crates/mwlkit-py
+          target: ${{ matrix.target }}
+          manylinux: ${{ matrix.manylinux }}
+          args: --release --out dist --interpreter ${{ steps.interp.outputs.path }}
+          sccache: true
+      - name: Exactly one wheel
+        shell: bash
+        run: |
+          ls -la crates/mwlkit-py/dist
+          test "20 20 101 12 61 79 80 81 98 707 703 704 706 708 702 701 33find crates/mwlkit-py/dist -name '*.whl' | wc -l)" -eq 1
+      # The hl7kit wheel from THIS run, same platform: never from an index.
+      - name: hl7kit wheel from this run
+        if: matrix.smoke != 'none'
+        uses: actions/download-artifact@v4
+        with:
+          name: wheels-hl7kit-py-${{ matrix.id }}
+          path: crates/hl7kit-py/dist
+      - name: Smoke test (native)
+        if: matrix.smoke == 'native'
+        shell: bash
+        run: |
+          "${{ steps.py.outputs.python-path }}" -m pip install --upgrade pip
+          "${{ steps.py.outputs.python-path }}" -m pip install --only-binary=:all: --find-links crates/hl7kit-py/dist --find-links crates/mwlkit-py/dist "mwlkit[test]"
+          "${{ steps.py.outputs.python-path }}" -m pip show hl7kit mwlkit
+          "${{ steps.py.outputs.python-path }}" -m pytest -q crates/mwlkit-py/tests
+      - name: Smoke test (musllinux, in Alpine)
+        if: matrix.smoke == 'alpine'
+        run: |
+          docker run --rm -v "$PWD:/w" -w /w python:${{ env.PYTHON_FLOOR }}-alpine sh -ec '
+            pip install --only-binary=:all: --find-links crates/hl7kit-py/dist --find-links crates/mwlkit-py/dist "mwlkit[test]"
+            pip show hl7kit mwlkit
+            pytest -q crates/mwlkit-py/tests'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheels-mwlkit-py-${{ matrix.id }}
+          path: crates/mwlkit-py/dist/*.whl
+          if-no-files-found: error
+
+  # ---------------------------------------------------------------------
+  sdist:
+    name: sdist ${{ matrix.crate }}
+    needs: rust
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        crate: [hl7kit-py, mwlkit-py]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: PyO3/maturin-action@v1
+        with:
+          working-directory: crates/${{ matrix.crate }}
+          command: sdist
+          args: --out dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sdist-${{ matrix.crate }}
+          path: crates/${{ matrix.crate }}/dist/*.tar.gz
+          if-no-files-found: error
+
+  # ---------------------------------------------------------------------
+  publish-testpypi:
+    name: publish to TestPyPI
+    needs: [versions, wheels-hl7kit, wheels-mwlkit, sdist]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment:
+      name: testpypi
+      url: https://test.pypi.org/project/hl7kit/
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: "wheels-*"
+          merge-multiple: true
+          path: dist
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: "sdist-*"
+          merge-multiple: true
+          path: dist
+      - run: ls -la dist
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+          skip-existing: true
+
+  publish-pypi:
+    name: publish ${{ needs.versions.outputs.release_crate }} to PyPI
+    needs: [versions, wheels-hl7kit, wheels-mwlkit, sdist]
+    if: startsWith(github.ref, 'refs/tags/') && needs.versions.outputs.release_crate != ''
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/${{ needs.versions.outputs.release_crate == 'hl7kit-py' && 'hl7kit' || 'mwlkit' }}/
+    permissions:
+      id-token: write
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: wheels-${{ needs.versions.outputs.release_crate }}-*
+          merge-multiple: true
+          path: dist
+      - uses: actions/download-artifact@v4
+        with:
+          name: sdist-${{ needs.versions.outputs.release_crate }}
+          path: dist
+      - run: ls -la dist
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          attestations: true
+      - name: GitHub release with the same files
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "${{ needs.versions.outputs.release_crate }} ${{ needs.versions.outputs.release_version }}" \
+            --notes "Python wheels and sdist for ${{ needs.versions.outputs.release_crate == 'hl7kit-py' && 'hl7kit' || 'mwlkit' }} ${{ needs.versions.outputs.release_version }}, as published to PyPI with attestations."

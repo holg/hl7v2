@@ -1,0 +1,26 @@
+[build-system]
+requires = ["maturin>=1.7,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "mwlkit"
+version = "0.1.0"
+description = "HL7 v2 order -> DICOM Modality Worklist item (IHE RAD-4), with visible UID provenance and length-limit warnings. pydicom-compatible bytes out."
+readme = "README.md"
+license = { text = "MIT OR Apache-2.0" }
+requires-python = ">=3.9"
+dependencies = ["hl7kit>=0.2,<0.3"]
+
+[project.optional-dependencies]
+pydicom = ["pydicom>=2.4"]      # only for the interop helper, never required
+test = ["pytest>=7", "pydicom>=2.4"]
+
+[project.urls]
+Repository = "https://github.com/holg/hl7v2"
+Documentation = "https://docs.rs/mwlkit"
+
+[tool.maturin]
+python-source = "python"
+module-name = "mwlkit._native"
+features = ["pyo3/extension-module"]
+strip = true
