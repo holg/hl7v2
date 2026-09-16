@@ -191,7 +191,7 @@ jobs:
         shell: bash
         run: |
           ls -la crates/hl7kit-py/dist
-          test "20 20 101 12 61 79 80 81 98 707 703 704 706 708 702 701 33find crates/hl7kit-py/dist -name '*.whl' | wc -l)" -eq 1
+          test "$(find crates/hl7kit-py/dist -name '*.whl' | wc -l)" -eq 1
       - name: Smoke test (native)
         if: matrix.smoke == 'native'
         shell: bash
@@ -278,7 +278,7 @@ jobs:
         shell: bash
         run: |
           ls -la crates/mwlkit-py/dist
-          test "20 20 101 12 61 79 80 81 98 707 703 704 706 708 702 701 33find crates/mwlkit-py/dist -name '*.whl' | wc -l)" -eq 1
+          test "$(find crates/mwlkit-py/dist -name '*.whl' | wc -l)" -eq 1
       # The hl7kit wheel from THIS run, same platform: never from an index.
       - name: hl7kit wheel from this run
         if: matrix.smoke != 'none'
