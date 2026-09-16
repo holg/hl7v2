@@ -87,6 +87,12 @@ impl PickerDelegate {
 
 /// Copy a picked file or folder into Documents; returns the new path.
 fn import(src: &Path, docs: &Path) -> Result<PathBuf, String> {
+    // Picked from our own folder (Files > On My iPad > dicomscope): use it
+    // where it is; copying a file onto itself fails.
+    let canon = |p: &Path| p.canonicalize().unwrap_or_else(|_| p.to_path_buf());
+    if canon(src).starts_with(canon(docs)) {
+        return Ok(src.to_path_buf());
+    }
     let name = src
         .file_name()
         .ok_or_else(|| "picked path has no name".to_string())?;

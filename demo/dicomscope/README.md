@@ -227,7 +227,7 @@ and is shared byte for byte; the browser crate and the desktop crate only
 create the surface and handle input.
 
 ```sh
-cargo run --release -p dicomscope-desktop -- samples/anonymized-demo-clean.zip
+cargo run --profile native -p dicomscope-desktop -- samples/anonymized-demo-clean.zip
 ```
 
 Wheel or Up/Down scroll slices, PageUp/PageDown switch series, a trackpad

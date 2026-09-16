@@ -17,7 +17,7 @@ use winit::window::{Window, WindowId};
 /// studies (folders, zips, DICOM files) and orders (`.hl7`, `.txt`) in any
 /// order.
 pub fn run(paths: Vec<String>) {
-    let mut session = Session::default();
+    let mut session = Session::new();
     if !paths.is_empty() {
         session.open_paths(&paths);
         if let Some(e) = &session.error {
@@ -40,7 +40,12 @@ pub fn run(paths: Vec<String>) {
         session,
         gpu: None,
         ui,
-        known: paths.into_iter().collect(),
+        // Everything in the folder now is known; only later arrivals count.
+        known: paths
+            .into_iter()
+            .chain(platform::folder_entries().into_iter().map(|e| e.path))
+            .collect(),
+        next_repaint: None,
     };
     if let Err(e) = event_loop.run_app(&mut app) {
         eprintln!("event loop failed: {e}");
@@ -64,6 +69,8 @@ struct App {
     /// Paths already opened from the platform's document folders, so a
     /// rescan on foreground opens only what is new.
     known: std::collections::HashSet<String>,
+    /// When egui asked to be repainted next (cine, animations).
+    next_repaint: Option<std::time::Instant>,
 }
 
 impl App {
@@ -99,6 +106,10 @@ impl App {
                 })?;
 
         let egui_ctx = egui::Context::default();
+        // Touch screens are read at arm's length: larger text and targets.
+        if cfg!(target_os = "ios") {
+            egui_ctx.set_zoom_factor(1.2);
+        }
         let egui_state = egui_winit::State::new(
             egui_ctx.clone(),
             egui::ViewportId::ROOT,
@@ -190,8 +201,10 @@ impl App {
                 color: u32::from(f.color),
                 rot: u32::from(v.rotation),
                 flip: u32::from(v.flip_h) | (u32::from(v.flip_v) << 1),
-                _pad0: 0,
-                _pad1: 0,
+                enhance: u32::from(self.session.enhance),
+                radius: self.session.enhance_radius_px(),
+                amount: self.session.enhance_amount,
+                ..Uniforms::default()
             });
         }
         gpu.renderer
@@ -232,14 +245,23 @@ impl App {
             self.known.extend(picked);
         }
 
-        if output
+        // egui says when it wants the next frame: now (an animation), after
+        // a delay (cine's next step), or never until an event.
+        let delay = output
             .viewport_output
             .get(&egui::ViewportId::ROOT)
-            .is_some_and(|v| v.repaint_delay.is_zero())
-        {
-            if let Some(gpu) = &self.gpu {
-                gpu.window.request_redraw();
+            .map(|v| v.repaint_delay);
+        match delay {
+            Some(d) if d.is_zero() => {
+                self.next_repaint = None;
+                if let Some(gpu) = &self.gpu {
+                    gpu.window.request_redraw();
+                }
             }
+            Some(d) if d < std::time::Duration::from_secs(3600) => {
+                self.next_repaint = Some(std::time::Instant::now() + d);
+            }
+            _ => self.next_repaint = None,
         }
     }
 
@@ -340,7 +362,7 @@ impl ApplicationHandler for App {
         if self.gpu.is_some() {
             // Back in the foreground (iOS): "Open in dicomscope" from another
             // app has put a copy into Documents/Inbox by now.
-            let fresh: Vec<String> = platform::initial_paths()
+            let fresh: Vec<String> = platform::inbox_paths()
                 .into_iter()
                 .filter(|p| !self.known.contains(p))
                 .collect();
@@ -363,19 +385,37 @@ impl ApplicationHandler for App {
         }
     }
 
-    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
-        // The document picker hands its result to a delegate outside our
-        // events; a short wake-up on iOS picks it up without a touch.
-        if cfg!(target_os = "ios") {
-            if platform::has_picked() {
-                if let Some(gpu) = &self.gpu {
-                    gpu.window.request_redraw();
-                }
+    fn new_events(&mut self, _event_loop: &ActiveEventLoop, cause: winit::event::StartCause) {
+        if matches!(cause, winit::event::StartCause::ResumeTimeReached { .. }) {
+            self.next_repaint = None;
+            if let Some(gpu) = &self.gpu {
+                gpu.window.request_redraw();
             }
-            event_loop.set_control_flow(ControlFlow::wait_duration(
-                std::time::Duration::from_millis(300),
-            ));
         }
+    }
+
+    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        // Sleep until egui's next requested frame. On iOS also wake up
+        // regularly: the document picker hands its result to a delegate
+        // outside our events.
+        if cfg!(target_os = "ios") && platform::has_picked() {
+            if let Some(gpu) = &self.gpu {
+                gpu.window.request_redraw();
+            }
+        }
+        let poll = if cfg!(target_os = "ios") {
+            Some(std::time::Instant::now() + std::time::Duration::from_millis(300))
+        } else {
+            None
+        };
+        let next = match (self.next_repaint, poll) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (a, b) => a.or(b),
+        };
+        event_loop.set_control_flow(match next {
+            Some(t) => ControlFlow::WaitUntil(t),
+            None => ControlFlow::Wait,
+        });
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {

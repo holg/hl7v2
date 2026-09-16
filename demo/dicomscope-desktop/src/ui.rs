@@ -5,6 +5,7 @@ use crate::session::{DocumentContent, FhirText, Session};
 use dicomscope_core::dicom::TagRow;
 use dicomscope_core::link::{ChainFinding, KeyConflict, LinkPath, Pair};
 use dicomscope_core::measure::{Measurement, Point};
+use dicomscope_core::nerve::NerveTrace;
 use dicomscope_core::view::Viewport;
 use egui::{Color32, Key, Pos2, RichText, TextureHandle, Ui};
 use hl7kit::order::OrderField;
@@ -29,15 +30,20 @@ pub struct Actions {
     pub image_rect: Option<(u32, u32, u32, u32)>,
 }
 
-/// A two-finger touch gesture: a pinch zooms, a drag windows. Which one it
-/// is gets decided from the first movement and then sticks until the
-/// fingers lift, so a slightly uneven drag does not zoom.
+/// A two-finger touch gesture: a pinch zooms, a horizontal drag scrolls
+/// slices, a vertical drag sets the window level. Which one it is gets
+/// decided from the first movement and then sticks until the fingers
+/// lift, so a slightly uneven drag does not switch.
 #[derive(Clone, Copy, PartialEq)]
 pub enum Gesture {
     Undecided { zoom_log: f32, moved: egui::Vec2 },
     Zoom,
-    Window,
+    Slices { accum: f32 },
+    Level,
 }
+
+/// Points of horizontal two-finger travel per slice.
+const SLICE_STEP_PT: f32 = 14.0;
 
 /// What the left mouse button does in the image area.
 #[derive(Default, Clone, Copy, PartialEq, Eq)]
@@ -46,7 +52,12 @@ pub enum Tool {
     Pan,
     Length,
     Angle,
+    /// Mandibular canal tracing: click points, Finish (or Enter) closes it.
+    Nerve,
 }
+
+/// Yellow, the colour dental software paints the canal in.
+const NERVE: Color32 = Color32::from_rgb(0xff, 0xd7, 0x00);
 
 /// UI-only state that outlives a frame.
 #[derive(Default)]
@@ -60,8 +71,13 @@ pub struct UiState {
     pub gesture: Option<Gesture>,
     pub status: Option<String>,
     pub tool: Tool,
-    /// Points of the measurement being drawn, in source pixels.
+    /// Points of the measurement or trace being drawn, in source pixels.
     pub draft: Vec<Point>,
+    /// A nerve control point being dragged: (trace, point).
+    pub nerve_drag: Option<(usize, usize)>,
+    /// How far the finger travelled in the current press, to tell a tap
+    /// from a pan on a touch screen.
+    pub press_travel: f32,
 }
 
 #[derive(Default, Clone, Copy, PartialEq, Eq)]
@@ -131,6 +147,10 @@ pub fn draw(root: &mut Ui, session: &mut Session, state: &mut UiState) -> Action
             if ui.button("Open HL7 order").clicked() {
                 actions.open_hl7 = true;
             }
+            let entries = crate::platform::folder_entries();
+            if !entries.is_empty() {
+                ui.menu_button("Files", |ui| files_panel(ui, &entries, &mut actions));
+            }
             if cfg!(target_os = "ios") && ui.button("Reload").clicked() {
                 actions.reload = true;
             }
@@ -139,14 +159,27 @@ pub fn draw(root: &mut Ui, session: &mut Session, state: &mut UiState) -> Action
                 (Tool::Pan, "Pan"),
                 (Tool::Length, "Length"),
                 (Tool::Angle, "Angle"),
+                (Tool::Nerve, "Nerve"),
             ] {
                 if ui.selectable_label(state.tool == t, label).clicked() {
                     state.tool = t;
                     state.draft.clear();
                 }
             }
+            if state.tool == Tool::Nerve
+                && state.draft.len() >= 2
+                && ui.button("Finish nerve").clicked()
+            {
+                session.push_nerve(NerveTrace::new(std::mem::take(&mut state.draft)));
+            }
             if ui.button("Undo").clicked() {
-                session.remove_last_measurement();
+                if state.tool == Tool::Nerve {
+                    if state.draft.pop().is_none() {
+                        session.remove_last_nerve();
+                    }
+                } else {
+                    session.remove_last_measurement();
+                }
             }
             if ui.button("Clear").clicked() {
                 session.clear_measurements();
@@ -167,6 +200,28 @@ pub fn draw(root: &mut Ui, session: &mut Session, state: &mut UiState) -> Action
                 ui.label(RichText::new(&h.name).weak());
             }
         });
+        if state.tool == Tool::Nerve {
+            ui.horizontal(|ui| {
+                ui.label(RichText::new("Nerve").color(NERVE).strong());
+                ui.label(format!("{} point(s)", state.draft.len()));
+                let two = state.draft.len() >= 2;
+                if ui
+                    .add_enabled(two, egui::Button::new("Find canal"))
+                    .on_hover_text("Tap the two foramina first; follows the dark band between them (f)")
+                    .on_disabled_hover_text("Tap two points on the image first")
+                    .clicked()
+                {
+                    find_canal(session, state);
+                }
+                if ui.add_enabled(two, egui::Button::new("Finish trace")).clicked() {
+                    session.push_nerve(NerveTrace::new(std::mem::take(&mut state.draft)));
+                }
+                if ui.add_enabled(!state.draft.is_empty(), egui::Button::new("Clear points")).clicked() {
+                    state.draft.clear();
+                }
+                ui.weak("tap the mental and the mandibular foramen, then Find canal; or tap along the canal and Finish");
+            });
+        }
         if let Some(e) = &session.error {
             banner(ui, DANGER, e);
         }
@@ -175,21 +230,20 @@ pub fn draw(root: &mut Ui, session: &mut Session, state: &mut UiState) -> Action
         }
     });
 
+    let screen_w = root.max_rect().width();
     egui::Panel::right("panels")
         .resizable(true)
-        .default_size(460.0)
+        .default_size(if cfg!(target_os = "ios") {
+            520.0
+        } else {
+            460.0
+        })
         .min_size(280.0)
-        .max_size(640.0)
+        .max_size((screen_w * 0.85).max(280.0))
         .show(root, |ui| {
             // Long UIDs must wrap or scroll inside the panel, never widen it.
             ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
             egui::ScrollArea::vertical().show(ui, |ui| {
-                let entries = crate::platform::folder_entries();
-                if !entries.is_empty() {
-                    egui::CollapsingHeader::new("Files")
-                        .default_open(true)
-                        .show(ui, |ui| files_panel(ui, &entries, &mut actions));
-                }
                 egui::CollapsingHeader::new("Series")
                     .default_open(true)
                     .show(ui, |ui| series_panel(ui, session, state));
@@ -241,9 +295,13 @@ fn banner(ui: &mut Ui, color: Color32, text: &str) {
 // ---------------------------------------------------------------------------
 
 fn image_area(ui: &mut Ui, session: &mut Session, state: &mut UiState, actions: &mut Actions) {
-    let rect = ui.available_rect_before_wrap();
+    // The area egui gives the central panel, clamped to the screen: on some
+    // frames it is unconstrained, and the renderer must never see that.
+    let rect = ui
+        .available_rect_before_wrap()
+        .intersect(ui.ctx().content_rect());
     let ppp = ui.ctx().pixels_per_point();
-    let px = |v: f32| (v * ppp).round().max(0.0) as u32;
+    let px = |v: f32| (v * ppp).round().clamp(0.0, 16384.0) as u32;
     let region = (
         px(rect.min.x),
         px(rect.min.y),
@@ -286,7 +344,9 @@ fn image_area(ui: &mut Ui, session: &mut Session, state: &mut UiState, actions: 
         .or_else(|| response.interact_pointer_pos());
 
     // Two fingers (touch): pinch zooms about the fingers, drag windows.
-    let multi = ui.input(|i| i.multi_touch()).filter(|m| m.num_touches >= 2);
+    let multi = ui
+        .input(|i| i.multi_touch())
+        .filter(|m| m.num_touches >= 2 && rect.contains(m.start_pos));
     let two_finger = multi.is_some();
     match multi {
         Some(m) => {
@@ -300,15 +360,30 @@ fn image_area(ui: &mut Ui, session: &mut Session, state: &mut UiState, actions: 
                 if zoom_log.abs() > 0.08 {
                     *g = Gesture::Zoom;
                 } else if moved.length() > 12.0 {
-                    *g = Gesture::Window;
+                    *g = if moved.x.abs() >= moved.y.abs() {
+                        Gesture::Slices { accum: 0.0 }
+                    } else {
+                        Gesture::Level
+                    };
                 }
             }
-            match *g {
+            match g {
                 Gesture::Zoom => {
                     let c = m.center_pos - rect.min;
                     session.view = session.view.zoom_about(m.zoom_delta, c.x * ppp, c.y * ppp);
                 }
-                Gesture::Window => {
+                Gesture::Slices { accum } => {
+                    *accum += m.translation_delta.x;
+                    while *accum >= SLICE_STEP_PT {
+                        session.scroll_slices(1);
+                        *accum -= SLICE_STEP_PT;
+                    }
+                    while *accum <= -SLICE_STEP_PT {
+                        session.scroll_slices(-1);
+                        *accum += SLICE_STEP_PT;
+                    }
+                }
+                Gesture::Level => {
                     if let Some(f) = &session.frame {
                         let span = (f.value_range.1 - f.value_range.0).max(1.0);
                         let d = m.translation_delta;
@@ -316,7 +391,7 @@ fn image_area(ui: &mut Ui, session: &mut Session, state: &mut UiState, actions: 
                         session.window = (
                             (c + d.y / rect.height() * span)
                                 .clamp(f.value_range.0, f.value_range.1),
-                            (w + d.x / rect.width() * span).max(1.0),
+                            w,
                         );
                     }
                 }
@@ -355,6 +430,10 @@ fn image_area(ui: &mut Ui, session: &mut Session, state: &mut UiState, actions: 
         }
         Tool::Angle => {
             if let Some(p) = pointer.map(to_source) {
+                if response.dragged_by(egui::PointerButton::Primary) && !two_finger {
+                    let d = response.drag_delta() * ppp;
+                    session.view = session.view.pan(d.x, d.y);
+                }
                 if response.clicked_by(egui::PointerButton::Primary) {
                     // The last draft point follows the pointer; a click fixes it.
                     if let Some(last) = state.draft.last_mut() {
@@ -372,6 +451,63 @@ fn image_area(ui: &mut Ui, session: &mut Session, state: &mut UiState, actions: 
                     }
                 } else if let Some(last) = state.draft.last_mut() {
                     *last = p;
+                }
+            }
+        }
+        Tool::Nerve => {
+            if let Some(p) = pointer.map(to_source) {
+                // Near an existing control point: drag it. Otherwise a
+                // click appends to the trace being drawn.
+                let hit = if state.nerve_drag.is_none()
+                    && response.drag_started_by(egui::PointerButton::Primary)
+                {
+                    let near = 14.0 / (view.scale / ppp).max(1e-3);
+                    session
+                        .nerves()
+                        .iter()
+                        .enumerate()
+                        .flat_map(|(ti, t)| {
+                            t.points.iter().enumerate().map(move |(pi, q)| (ti, pi, *q))
+                        })
+                        .find(|(_, _, q)| dicomscope_core::measure::length_px(*q, p) <= near)
+                        .map(|(ti, pi, _)| (ti, pi))
+                } else {
+                    None
+                };
+                if let Some(h) = hit {
+                    state.nerve_drag = Some(h);
+                }
+                if let Some((ti, pi)) = state.nerve_drag {
+                    if response.dragged_by(egui::PointerButton::Primary) {
+                        session.move_nerve_point(ti, pi, p);
+                    }
+                    if response.drag_stopped_by(egui::PointerButton::Primary) {
+                        state.nerve_drag = None;
+                        session.save_annotations();
+                    }
+                } else if response.clicked_by(egui::PointerButton::Primary) {
+                    state.draft.push(p);
+                } else if response.dragged_by(egui::PointerButton::Primary) && !two_finger {
+                    // A drag that did not start on a point pans, as in Pan;
+                    // a press that barely moved is a tap on a touch screen.
+                    let d = response.drag_delta();
+                    state.press_travel += d.length();
+                    session.view = session.view.pan(d.x * ppp, d.y * ppp);
+                }
+                if response.drag_started_by(egui::PointerButton::Primary) {
+                    state.press_travel = 0.0;
+                }
+                if response.drag_stopped_by(egui::PointerButton::Primary)
+                    && state.nerve_drag.is_none()
+                    && state.press_travel < 6.0
+                    && !response.clicked_by(egui::PointerButton::Primary)
+                {
+                    state.draft.push(p);
+                }
+                if response.double_clicked_by(egui::PointerButton::Primary)
+                    && state.draft.len() >= 2
+                {
+                    session.push_nerve(NerveTrace::new(std::mem::take(&mut state.draft)));
                 }
             }
         }
@@ -455,6 +591,12 @@ fn image_area(ui: &mut Ui, session: &mut Session, state: &mut UiState, actions: 
             state.draft.clear();
             state.tool = Tool::Pan;
         }
+        if pressed(Key::F) && state.tool == Tool::Nerve && state.draft.len() >= 2 {
+            find_canal(session, state);
+        }
+        if pressed(Key::Enter) && state.tool == Tool::Nerve && state.draft.len() >= 2 {
+            session.push_nerve(NerveTrace::new(std::mem::take(&mut state.draft)));
+        }
         if pressed(Key::Delete) || pressed(Key::Backspace) {
             if state.draft.is_empty() {
                 session.remove_last_measurement();
@@ -513,6 +655,44 @@ fn image_area(ui: &mut Ui, session: &mut Session, state: &mut UiState, actions: 
             Color32::from_rgb(0xff, 0xd7, 0x4d),
         );
     };
+    // Nerve canals: a translucent yellow tube of the trace's diameter, its
+    // centre line, control points, and the side and length.
+    let image_w = image.0;
+    let tube_px = |t: &NerveTrace| t.diameter_px(spacing) * view.scale / ppp;
+    let draw_nerve = |painter: &egui::Painter, t: &NerveTrace, settled: bool| {
+        let pts: Vec<Pos2> = t.spline(8).iter().map(|&p| to_screen(p)).collect();
+        if pts.len() < 2 {
+            for p in &pts {
+                painter.circle_filled(*p, 4.0, NERVE);
+            }
+            return;
+        }
+        let alpha = if settled { 110 } else { 60 };
+        painter.add(egui::Shape::line(
+            pts.clone(),
+            egui::Stroke::new(
+                tube_px(t).max(2.0),
+                Color32::from_rgba_unmultiplied(0xff, 0xd7, 0x00, alpha),
+            ),
+        ));
+        painter.add(egui::Shape::line(
+            pts.clone(),
+            egui::Stroke::new(1.0, NERVE),
+        ));
+        for p in &t.points {
+            painter.circle_stroke(to_screen(*p), 4.0, egui::Stroke::new(1.5, NERVE));
+        }
+        if settled {
+            let mid = pts[pts.len() / 2];
+            label(painter, mid, t.label(image_w, spacing));
+        }
+    };
+    for t in session.nerves() {
+        draw_nerve(&painter, t, true);
+    }
+    if state.tool == Tool::Nerve && !state.draft.is_empty() {
+        draw_nerve(&painter, &NerveTrace::new(state.draft.clone()), false);
+    }
     for m in session.measurements() {
         let pts: Vec<Pos2> = m.points().iter().map(|&p| to_screen(p)).collect();
         painter.add(egui::Shape::line(pts.clone(), stroke));
@@ -527,7 +707,7 @@ fn image_area(ui: &mut Ui, session: &mut Session, state: &mut UiState, actions: 
         };
         label(&painter, at, m.label(spacing));
     }
-    if state.draft.len() >= 2 {
+    if state.draft.len() >= 2 && state.tool != Tool::Nerve {
         let pts: Vec<Pos2> = state.draft.iter().map(|&p| to_screen(p)).collect();
         painter.add(egui::Shape::line(
             pts.clone(),
@@ -601,12 +781,13 @@ fn image_area(ui: &mut Ui, session: &mut Session, state: &mut UiState, actions: 
         );
         let hint = match state.tool {
             Tool::Pan => if cfg!(target_os = "ios") {
-                "slider or two-finger flick scrolls slices · pinch zooms · drag pans · two-finger drag windows · Play for cine · 0 fit · 1 1:1 · r/R rotate · h/v flip"
+                "two fingers left/right: slices · two fingers up/down: level · pinch: zoom · one finger: pan · width on the slider · Play for cine"
             } else {
                 "wheel slices · pinch or Option/Alt+wheel zoom · drag pans · right-drag windows · space plays · 0 fit · 1 1:1 · r/R rotate · h/v flip · i interpolation · w reset window"
             },
             Tool::Length => "Length: drag from one point to the other · Delete removes the last · Escape back to Pan",
             Tool::Angle => "Angle: click the first ray end, the vertex, then the second ray end · Escape back to Pan",
+            Tool::Nerve => "Nerve: tap the two foramina, then Find canal (f) · or tap along the canal and Finish (Enter) · drag a point to adjust · Undo",
         };
         painter.text(
             rect.left_bottom() + egui::vec2(8.0, -8.0),
@@ -802,44 +983,127 @@ fn window_panel(ui: &mut Ui, session: &mut Session) {
     ui.add(egui::Slider::new(&mut c, lo..=hi).text("centre"));
     ui.add(egui::Slider::new(&mut w, 1.0..=span * 2.0).text("width"));
     session.window = (c, w);
-    ui.horizontal(|ui| {
+    ui.horizontal_wrapped(|ui| {
         if ui.button("File default").clicked() {
             session.reset_window();
         }
         if ui.button("Full range").clicked() {
             session.window = dicomscope_core::dicom::fallback_window(f.value_range);
         }
+        if session.study.as_ref().and_then(|s| s.modality.as_deref()) == Some("CT") {
+            for (name, c, w) in [
+                ("Bone", 300.0, 2000.0),
+                ("Soft", 40.0, 400.0),
+                ("Lung", -600.0, 1500.0),
+                ("Brain", 40.0, 80.0),
+            ] {
+                if ui.button(name).clicked() {
+                    session.window = (c, w);
+                }
+            }
+        }
         if let Some((dc, dw)) = f.default_window {
             ui.weak(format!("file: W {dw:.0} L {dc:.0}"));
+        }
+    });
+    // Traced canals on this image: adjust the tube diameter.
+    let nerve_count = session.nerves().len();
+    for i in 0..nerve_count {
+        let (label, mut d) = {
+            let t = &session.nerves()[i];
+            (
+                t.label(
+                    session.image().map(|im| im.0).unwrap_or(1),
+                    session.spacing(),
+                ),
+                t.diameter_mm,
+            )
+        };
+        ui.horizontal(|ui| {
+            ui.label(RichText::new(label).color(NERVE));
+            if ui
+                .add(egui::Slider::new(&mut d, 1.0..=6.0).text("mm"))
+                .changed()
+            {
+                session.set_nerve_diameter(i, d);
+            }
+        });
+    }
+    // Local contrast: makes a canal's cortical lines stand out on a
+    // panoramic image. In the shader, so it costs nothing to toggle.
+    ui.horizontal_wrapped(|ui| {
+        ui.checkbox(&mut session.enhance, "Enhance local contrast");
+        if session.enhance {
+            ui.add(egui::Slider::new(&mut session.enhance_amount, 0.2..=3.0).text("amount"));
+            if session.spacing().is_some() {
+                ui.add(
+                    egui::Slider::new(&mut session.enhance_radius_mm, 1.0..=8.0).text("scale mm"),
+                );
+            } else {
+                ui.weak(format!(
+                    "scale {:.0} px (no pixel spacing)",
+                    session.enhance_radius_px()
+                ));
+            }
         }
     });
 }
 
 fn tag_table(ui: &mut Ui, id: &str, filter: &mut String, rows: &[TagRow], height: f32) {
+    use egui_extras::{Column, TableBuilder};
     ui.add(
         egui::TextEdit::singleline(filter)
             .hint_text("Filter by tag, keyword or value")
             .desired_width(f32::INFINITY),
     );
     let shown: Vec<&TagRow> = rows.iter().filter(|r| r.matches(filter)).collect();
-    let row_height = ui.text_style_height(&egui::TextStyle::Monospace);
-    egui::ScrollArea::both()
-        .id_salt(id)
-        .max_height(height)
-        .show_rows(ui, row_height, shown.len(), |ui, range| {
-            egui::Grid::new(format!("{id}-grid"))
-                .striped(true)
-                .show(ui, |ui| {
-                    for r in &shown[range] {
-                        let indent = "  ".repeat(r.depth.min(3));
-                        ui.monospace(format!("{indent}{}", r.tag));
-                        ui.monospace(&r.keyword);
-                        ui.monospace(&r.vr);
-                        ui.monospace(&r.value);
-                        ui.end_row();
-                    }
+    ui.weak(format!("{} of {} elements", shown.len(), rows.len()));
+    let row_h = ui.text_style_height(&egui::TextStyle::Monospace) + 6.0;
+    ui.push_id(id, |ui| {
+        TableBuilder::new(ui)
+            .striped(true)
+            .resizable(true)
+            .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
+            .column(Column::exact(104.0))
+            .column(Column::initial(190.0).at_least(60.0).clip(true))
+            .column(Column::exact(36.0))
+            .column(Column::remainder().at_least(80.0).clip(true))
+            .min_scrolled_height(height)
+            .max_scroll_height(height)
+            .header(row_h, |mut h| {
+                h.col(|ui| {
+                    ui.strong("Tag");
                 });
-        });
+                h.col(|ui| {
+                    ui.strong("Keyword");
+                });
+                h.col(|ui| {
+                    ui.strong("VR");
+                });
+                h.col(|ui| {
+                    ui.strong("Value");
+                });
+            })
+            .body(|body| {
+                body.rows(row_h, shown.len(), |mut row| {
+                    let r = shown[row.index()];
+                    let indent = "  ".repeat(r.depth.min(3));
+                    row.col(|ui| {
+                        ui.monospace(format!("{indent}{}", r.tag));
+                    });
+                    row.col(|ui| {
+                        ui.add(egui::Label::new(&r.keyword).truncate());
+                    });
+                    row.col(|ui| {
+                        ui.monospace(&r.vr);
+                    });
+                    row.col(|ui| {
+                        ui.add(egui::Label::new(RichText::new(&r.value).monospace()).truncate())
+                            .on_hover_text(&r.value);
+                    });
+                });
+            });
+    });
 }
 
 fn hl7_panel(ui: &mut Ui, session: &Session) {
@@ -878,12 +1142,7 @@ fn hl7_panel(ui: &mut Ui, session: &Session) {
         pos = end;
     }
     job.append(&raw[pos..], 0.0, plain);
-    egui::ScrollArea::both()
-        .id_salt("hl7")
-        .max_height(220.0)
-        .show(ui, |ui| {
-            ui.label(job);
-        });
+    ui.label(job);
     ui.horizontal_wrapped(|ui| {
         ui.weak("highlighted:");
         for (f, name) in [
@@ -1162,21 +1421,19 @@ fn fhir_panel(ui: &mut Ui, session: &Session, state: &mut UiState, actions: &mut
             actions.save_fhir = true;
         }
     });
-    egui::ScrollArea::both()
-        .id_salt("fhir")
-        .max_height(360.0)
-        .show(ui, |ui| {
-            ui.add(
-                egui::Label::new(RichText::new(state.fhir_tab.text(f)).monospace().size(11.0))
-                    .selectable(true),
-            );
-        });
+    // No inner scroll area: nested areas collapse to the space left below
+    // them on the panel; the panel itself scrolls the whole text.
+    ui.add(
+        egui::Label::new(RichText::new(state.fhir_tab.text(f)).monospace().size(11.0))
+            .selectable(true),
+    );
 }
 
 /// The document folder on platforms that have one (iOS): tap an entry to
 /// open that study or order alone.
 fn files_panel(ui: &mut Ui, entries: &[crate::platform::FolderEntry], actions: &mut Actions) {
-    ui.weak("dicomscope folder in Files. Studies open alone; orders load next to the open study.");
+    ui.set_min_width(320.0);
+    ui.weak("The dicomscope folder. A study opens alone; an order loads next to the open study.");
     for e in entries {
         let size = if e.size >= 1_000_000 {
             format!("{:.0} MB", e.size as f64 / 1e6)
@@ -1191,6 +1448,24 @@ fn files_panel(ui: &mut Ui, entries: &[crate::platform::FolderEntry], actions: &
         );
         if ui.button(label).clicked() {
             actions.open_entry = Some(e.path.clone());
+            ui.close();
         }
     }
+}
+
+/// Run the canal finder between the two draft points; the result becomes
+/// an editable trace, the draft is cleared, the status says how sure it is.
+fn find_canal(session: &mut Session, state: &mut UiState) {
+    // First and last point: the two foramina, whatever was tapped between.
+    let (a, b) = (state.draft[0], state.draft[state.draft.len() - 1]);
+    state.status = Some(match session.detect_nerve(a, b) {
+        Ok(c) => {
+            state.draft.clear();
+            format!(
+                "Canal traced between the points, band confidence {:.0}%. A proposal: check it and drag the points where it strays.",
+                c * 100.0
+            )
+        }
+        Err(e) => format!("Canal not found: {e}"),
+    });
 }

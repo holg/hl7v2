@@ -1,12 +1,15 @@
 //! The desktop app's state and every operation on it, free of egui and
 //! winit so it can be tested on the host like the core it drives.
 
+use dicomscope_core::annotations::{self, Annotations, ImageAnnotations};
 use dicomscope_core::dicom::pixels::FrameInfo;
 use dicomscope_core::dicom::sr;
 use dicomscope_core::dicom::{self, Frame, Study, StudySet, TagRow};
 use dicomscope_core::fhir::{self, FhirInput};
 use dicomscope_core::link::{self, Chain, Linkage, WorklistKeys};
-use dicomscope_core::measure::Measurement;
+use dicomscope_core::measure::{Measurement, Spacing};
+use dicomscope_core::nerve::NerveTrace;
+use dicomscope_core::nervefind;
 use dicomscope_core::thumbnail::{thumbnail, Thumbnail};
 use dicomscope_core::view::Viewport;
 use dicomscope_core::worklist::{self, WorklistOutput};
@@ -14,6 +17,7 @@ use dicomscope_core::{fs, AppError};
 use hl7kit::order::{Order, OrderField};
 use hl7kit::{Message, Span};
 use std::collections::HashMap;
+use std::path::PathBuf;
 
 /// Longest side of a series thumbnail, in pixels.
 pub const THUMB_SIZE: u32 = 96;
@@ -78,6 +82,14 @@ pub struct Session {
     pub document: Option<(usize, DocumentContent)>,
     /// Measurements per (file, frame), kept while scrolling.
     marks: HashMap<(usize, u32), Vec<Measurement>>,
+    /// Nerve traces per (file, frame).
+    nerves: HashMap<(usize, u32), Vec<NerveTrace>>,
+    /// Where measurements and traces are saved, next to the study.
+    annotations_path: Option<PathBuf>,
+    /// Local contrast enhancement in the shader.
+    pub enhance: bool,
+    pub enhance_amount: f32,
+    pub enhance_radius_mm: f32,
     /// (file, frame) of the slice on screen.
     key: (usize, u32),
     pub playing: bool,
@@ -85,11 +97,35 @@ pub struct Session {
     last_tick: f64,
     /// Decoded but not yet uploaded to the GPU; the window loop takes it.
     pending: Option<Frame>,
+    /// The greyscale pixels on screen, kept for image analysis (canal
+    /// finding); `None` for colour images.
+    gray: Option<std::sync::Arc<Vec<f32>>>,
     /// Size of the image area in device pixels, kept for refits.
     canvas: (u32, u32),
 }
 
 impl Session {
+    pub fn new() -> Session {
+        Session {
+            enhance_amount: 1.0,
+            enhance_radius_mm: 3.0,
+            ..Session::default()
+        }
+    }
+
+    /// Enhancement radius in source pixels: from the pixel spacing, else a
+    /// guess that suits a panoramic image.
+    pub fn enhance_radius_px(&self) -> f32 {
+        match self.frame.as_ref().and_then(|f| f.spacing) {
+            Some(s) => (self.enhance_radius_mm / s.col_mm).clamp(2.0, 200.0),
+            None => 30.0,
+        }
+    }
+
+    pub fn spacing(&self) -> Option<Spacing> {
+        self.frame.as_ref().and_then(|f| f.spacing)
+    }
+
     /// The window loop tells the session how big the image area is.
     pub fn set_canvas(&mut self, size: (u32, u32)) {
         let size = (size.0.max(1), size.1.max(1));
@@ -133,8 +169,10 @@ impl Session {
             Ok::<_, String>(acc)
         });
         self.marks.clear();
+        self.nerves.clear();
         self.playing = false;
         self.document = None;
+        self.annotations_path = paths.first().map(|p| annotations_path_for(p));
         match inputs.map(StudySet::scan) {
             Ok(set) if !set.is_empty() => {
                 self.thumbs = (0..set.series.len()).map(|_| None).collect();
@@ -142,6 +180,7 @@ impl Session {
                 self.source = path.clone();
                 self.error = None;
                 self.make_thumbnails();
+                self.load_annotations();
                 self.show_slice(0, 0, true);
             }
             Ok(set) => {
@@ -206,6 +245,10 @@ impl Session {
                 }
                 self.study = Some(study);
                 self.tags = tags;
+                self.gray = match &frame.pixels {
+                    dicomscope_core::dicom::Pixels::Gray(g) => Some(std::sync::Arc::new(g.clone())),
+                    dicomscope_core::dicom::Pixels::Rgba(_) => None,
+                };
                 self.pending = Some(frame);
                 self.error = None;
             }
@@ -392,16 +435,152 @@ impl Session {
 
     pub fn push_measurement(&mut self, m: Measurement) {
         self.marks.entry(self.key).or_default().push(m);
+        self.save_annotations();
     }
 
     pub fn remove_last_measurement(&mut self) {
         if let Some(v) = self.marks.get_mut(&self.key) {
             v.pop();
         }
+        self.save_annotations();
     }
 
     pub fn clear_measurements(&mut self) {
         self.marks.remove(&self.key);
+        self.nerves.remove(&self.key);
+        self.save_annotations();
+    }
+
+    // --- nerve traces ---
+
+    pub fn nerves(&self) -> &[NerveTrace] {
+        self.nerves.get(&self.key).map(Vec::as_slice).unwrap_or(&[])
+    }
+
+    pub fn push_nerve(&mut self, t: NerveTrace) {
+        self.nerves.entry(self.key).or_default().push(t);
+        self.save_annotations();
+    }
+
+    pub fn remove_last_nerve(&mut self) {
+        if let Some(v) = self.nerves.get_mut(&self.key) {
+            v.pop();
+        }
+        self.save_annotations();
+    }
+
+    /// Move one control point of one trace; saved when the drag ends.
+    pub fn move_nerve_point(&mut self, trace: usize, point: usize, to: (f32, f32)) {
+        if let Some(p) = self
+            .nerves
+            .get_mut(&self.key)
+            .and_then(|v| v.get_mut(trace))
+            .and_then(|t| t.points.get_mut(point))
+        {
+            *p = to;
+        }
+    }
+
+    pub fn set_nerve_diameter(&mut self, trace: usize, diameter_mm: f32) {
+        if let Some(t) = self
+            .nerves
+            .get_mut(&self.key)
+            .and_then(|v| v.get_mut(trace))
+        {
+            t.diameter_mm = diameter_mm.clamp(0.5, 10.0);
+        }
+        self.save_annotations();
+    }
+
+    /// Find the canal between two points on the current image and add it
+    /// as a trace. The expected canal width comes from the pixel spacing
+    /// (3.5 mm), else a guess for a panoramic image.
+    pub fn detect_nerve(&mut self, a: (f32, f32), b: (f32, f32)) -> Result<f32, String> {
+        let (Some(gray), Some(f)) = (&self.gray, &self.frame) else {
+            return Err("no greyscale image on screen".into());
+        };
+        let canal_px = match f.spacing {
+            Some(s) => 3.5 / s.col_mm,
+            None => (f.width as f32 / 80.0).max(6.0),
+        };
+        let found =
+            nervefind::find_canal(gray, f.width as usize, f.height as usize, a, b, canal_px)?;
+        let confidence = found.confidence;
+        self.push_nerve(found.trace);
+        Ok(confidence)
+    }
+
+    // --- persistence ---
+
+    /// SOP Instance UID for a (file, frame) key, from the scanned series.
+    fn sop_uid(&self, key: (usize, u32)) -> Option<String> {
+        let set = self.set.as_ref()?;
+        set.series
+            .iter()
+            .flat_map(|s| s.slices.iter())
+            .find(|s| (s.file, s.frame) == key)
+            .map(|s| s.sop_instance_uid.clone())
+    }
+
+    fn annotations(&self) -> Annotations {
+        let mut a = Annotations::default();
+        let keys: std::collections::BTreeSet<(usize, u32)> = self
+            .marks
+            .keys()
+            .chain(self.nerves.keys())
+            .copied()
+            .collect();
+        for k in keys {
+            let Some(uid) = self.sop_uid(k) else { continue };
+            let entry = a.images.entry(annotations::key(&uid, k.1)).or_default();
+            entry.measurements = self.marks.get(&k).cloned().unwrap_or_default();
+            entry.nerves = self.nerves.get(&k).cloned().unwrap_or_default();
+        }
+        a
+    }
+
+    /// Write everything drawn to the JSON next to the study. Silent when
+    /// the study has no path or nothing is drawn yet and no file exists.
+    pub fn save_annotations(&self) {
+        let Some(path) = &self.annotations_path else {
+            return;
+        };
+        let a = self.annotations();
+        if a.images.values().all(ImageAnnotations::is_empty) && !path.exists() {
+            return;
+        }
+        if let Err(e) = std::fs::write(path, a.to_json()) {
+            eprintln!("annotations {}: {e}", path.display());
+        }
+    }
+
+    fn load_annotations(&mut self) {
+        let Some(path) = &self.annotations_path else {
+            return;
+        };
+        let Ok(text) = std::fs::read_to_string(path) else {
+            return;
+        };
+        let a = match Annotations::from_json(&text) {
+            Ok(a) => a,
+            Err(e) => {
+                eprintln!("annotations {}: {e}", path.display());
+                return;
+            }
+        };
+        let Some(set) = &self.set else { return };
+        for slice in set.series.iter().flat_map(|s| s.slices.iter()) {
+            let k = annotations::key(&slice.sop_instance_uid, slice.frame);
+            if let Some(img) = a.images.get(&k) {
+                let key = (slice.file, slice.frame);
+                if !img.measurements.is_empty() {
+                    self.marks.insert(key, img.measurements.clone());
+                }
+                if !img.nerves.is_empty() {
+                    self.nerves.insert(key, img.nerves.clone());
+                }
+            }
+        }
     }
 
     // --- cine ---
@@ -488,6 +667,19 @@ impl Session {
     }
 }
 
+/// Where a study's annotations live: inside a folder, or next to a zip or
+/// file with `.annotations.json` appended.
+fn annotations_path_for(study_path: &str) -> PathBuf {
+    let p = PathBuf::from(study_path);
+    if p.is_dir() {
+        p.join("dicomscope-annotations.json")
+    } else {
+        let mut s = p.into_os_string();
+        s.push(".annotations.json");
+        PathBuf::from(s)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -509,7 +701,7 @@ mod tests {
 
     #[test]
     fn study_and_order_derive_linkage_worklist_and_fhir() {
-        let mut s = Session::default();
+        let mut s = Session::new();
         s.set_canvas((800, 600));
         s.open_study(&synthetic_study("session"));
         assert!(s.error.is_none(), "{:?}", s.error);
@@ -543,7 +735,7 @@ mod tests {
             .build(),
         )
         .unwrap();
-        let mut s = Session::default();
+        let mut s = Session::new();
         s.set_canvas((100, 100));
         s.open_study(&path.display().to_string());
         assert!(s.error.is_none(), "{:?}", s.error);
@@ -581,8 +773,32 @@ mod tests {
     }
 
     #[test]
+    fn annotations_are_saved_next_to_the_study_and_reloaded() {
+        let path = synthetic_study("annot");
+        let mut s = Session::new();
+        s.set_canvas((100, 100));
+        s.open_study(&path);
+        assert!(s.nerves().is_empty());
+        s.push_nerve(NerveTrace::new(vec![(0.0, 0.0), (2.0, 1.0)]));
+        s.push_measurement(Measurement::Length {
+            a: (0.0, 0.0),
+            b: (3.0, 4.0),
+        });
+        let json = format!("{path}.annotations.json");
+        assert!(
+            std::path::Path::new(&json).exists(),
+            "written next to the file"
+        );
+        let mut again = Session::new();
+        again.set_canvas((100, 100));
+        again.open_study(&path);
+        assert_eq!(again.nerves().len(), 1);
+        assert_eq!(again.measurements().len(), 1);
+    }
+
+    #[test]
     fn order_alone_builds_the_worklist_item() {
-        let mut s = Session::default();
+        let mut s = Session::new();
         s.open_hl7(&format!("{SAMPLES}/order-omi.hl7"));
         assert!(s.linkage.is_none());
         assert!(matches!(s.worklist, Some(Ok(_))));

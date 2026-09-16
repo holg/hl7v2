@@ -34,7 +34,7 @@ impl Spacing {
 /// A point in source pixel coordinates (continuous; pixel centres at +0.5).
 pub type Point = (f32, f32);
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum Measurement {
     Length {
         a: Point,

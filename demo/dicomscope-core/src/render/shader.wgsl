@@ -18,8 +18,14 @@ struct Uniforms {
     // applied as in view.rs: flip in source space, then rotate.
     rot:    u32,
     flip:   u32,
-    _pad0:  u32,
-    _pad1:  u32,
+    // Local contrast enhancement (unsharp mask at a chosen scale): on/off,
+    // blur radius in source pixels, and how much of the difference to add.
+    enhance: u32,
+    radius:  f32,
+    amount:  f32,
+    _pad0:   u32,
+    _pad1:   u32,
+    _pad2:   u32,
 };
 
 @group(0) @binding(0) var img: texture_2d<f32>;
@@ -85,7 +91,25 @@ fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
     if (u.color == 1u) {
         return vec4<f32>(s.rgb, 1.0);
     }
-    let v = s.r;
+    var v = s.r;
+
+    // Local contrast: subtract a coarse local mean and add the difference
+    // back scaled. A 7x7 grid of taps with spacing radius/3 covers a window
+    // of 2*radius, enough to make a 3 mm canal's cortical lines stand out
+    // on a panoramic image without a separate blur pass.
+    if (u.enhance == 1u && u.color == 0u) {
+        let maxi = vec2<i32>(src) - vec2<i32>(1);
+        let step = max(u.radius / 3.0, 1.0);
+        var sum = 0.0;
+        for (var j = -3; j <= 3; j = j + 1) {
+            for (var i = -3; i <= 3; i = i + 1) {
+                let o = vec2<f32>(f32(i), f32(j)) * step;
+                sum = sum + load(vec2<i32>(q + o), maxi).r;
+            }
+        }
+        let mean = sum / 49.0;
+        v = v + u.amount * (v - mean);
+    }
 
     // DICOM PS3.3 C.11.2.1.2.1, linear VOI LUT function:
     //   y = ((x - (c - 0.5)) / (w - 1) + 0.5), clamped to [0, 1].

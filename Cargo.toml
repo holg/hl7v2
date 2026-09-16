@@ -23,3 +23,9 @@ lto = true
 strip = true
 codegen-units = 1
 panic = "abort"
+
+# Native builds (desktop, iPad): speed first. `release` stays size-first for
+# the wasm bundle, which Trunk builds with --release.
+[profile.native]
+inherits = "release"
+opt-level = 3

@@ -5,7 +5,7 @@ use crate::error::AppError;
 use wgpu::util::DeviceExt;
 
 /// Everything the shader needs besides the pixels. Matches `Uniforms` in
-/// `shader.wgsl`; 32 bytes.
+/// `shader.wgsl`; 64 bytes.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct Uniforms {
@@ -24,8 +24,15 @@ pub struct Uniforms {
     pub rot: u32,
     /// Bit 1 mirrors horizontally, bit 2 vertically (source space).
     pub flip: u32,
+    /// 1 turns on local contrast enhancement (greyscale only).
+    pub enhance: u32,
+    /// Enhancement scale: blur radius in source pixels.
+    pub radius: f32,
+    /// How much of the local difference to add back; 1.0 doubles it.
+    pub amount: f32,
     pub _pad0: u32,
     pub _pad1: u32,
+    pub _pad2: u32,
 }
 
 impl Default for Uniforms {
@@ -41,8 +48,12 @@ impl Default for Uniforms {
             color: 0,
             rot: 0,
             flip: 0,
+            enhance: 0,
+            radius: 30.0,
+            amount: 1.0,
             _pad0: 0,
             _pad1: 0,
+            _pad2: 0,
         }
     }
 }
@@ -351,6 +362,14 @@ impl Renderer {
                 multiview_mask: None,
             });
             if let Some((x, y, w, h)) = region {
+                // Clamp to the surface: a UI layout can hand over a region
+                // larger than the target for a frame, and wgpu aborts on a
+                // viewport past the texture limit.
+                let (sw, sh) = (self.config.width, self.config.height);
+                let x = x.min(sw);
+                let y = y.min(sh);
+                let w = w.min(sw - x);
+                let h = h.min(sh - y);
                 if w == 0 || h == 0 {
                     return;
                 }

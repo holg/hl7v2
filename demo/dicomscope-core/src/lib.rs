@@ -11,6 +11,7 @@
 #![warn(clippy::unwrap_used, clippy::expect_used)]
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
 
+pub mod annotations;
 pub mod dicom;
 pub mod error;
 pub mod fhir;
@@ -18,6 +19,8 @@ pub mod fhir;
 pub mod fs;
 pub mod link;
 pub mod measure;
+pub mod nerve;
+pub mod nervefind;
 pub mod order_gen;
 pub mod render;
 pub mod thumbnail;

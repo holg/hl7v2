@@ -21,6 +21,17 @@ pub fn initial_paths() -> Vec<String> {
     newest(false).into_iter().chain(newest(true)).collect()
 }
 
+/// Files that arrived through "Open in dicomscope" from another app: the
+/// Inbox folder only. The Documents folder itself is the user's, browsed
+/// through the Files menu, never opened behind their back.
+pub fn inbox_paths() -> Vec<String> {
+    folder_entries()
+        .into_iter()
+        .filter(|e| e.path.contains("/Inbox/"))
+        .map(|e| e.path)
+        .collect()
+}
+
 /// One entry of the platform's document folder.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FolderEntry {

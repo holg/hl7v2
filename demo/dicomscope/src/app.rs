@@ -123,8 +123,7 @@ pub fn App() -> impl IntoView {
                     color: u32::from(color),
                     rot: u32::from(v.rotation),
                     flip: u32::from(v.flip_h) | (u32::from(v.flip_v) << 1),
-                    _pad0: 0,
-                    _pad1: 0,
+                    ..Uniforms::default()
                 });
                 if let Err(e) = r.draw() {
                     error.set(Some(e.to_string()));

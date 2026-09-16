@@ -19,6 +19,7 @@ dicom-transfer-syntax-registry = "0.10.0"
 dicom-pixeldata = { version = "0.10.0", default-features = false, features = ["jpeg", "native", "rle", "deflate"] }
 bytemuck = { version = "1.25.2", features = ["derive"] }
 # FHIR output is built as serde_json::Value; no typed FHIR crate (see the demo README).
+serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 zip = { version = "7.2.0", default-features = false, features = ["deflate"] }
 # Backends are chosen by the app: `webgpu` in the browser, native ones on the desktop.

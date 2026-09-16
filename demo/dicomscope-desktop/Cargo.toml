@@ -27,6 +27,7 @@ winit = "0.30.13"
 pollster = "0.4"
 egui = "0.36.2"
 egui-wgpu = "0.36.2"
+egui_extras = { version = "0.36", default-features = false }
 
 # Desktop only: dialogs, opening files externally, clipboard and links.
 [target.'cfg(not(target_os = "ios"))'.dependencies]
