@@ -29,6 +29,16 @@ pub struct Actions {
     pub image_rect: Option<(u32, u32, u32, u32)>,
 }
 
+/// A two-finger touch gesture: a pinch zooms, a drag windows. Which one it
+/// is gets decided from the first movement and then sticks until the
+/// fingers lift, so a slightly uneven drag does not zoom.
+#[derive(Clone, Copy, PartialEq)]
+pub enum Gesture {
+    Undecided { zoom_log: f32, moved: egui::Vec2 },
+    Zoom,
+    Window,
+}
+
 /// What the left mouse button does in the image area.
 #[derive(Default, Clone, Copy, PartialEq, Eq)]
 pub enum Tool {
@@ -46,6 +56,8 @@ pub struct UiState {
     pub fhir_tab: FhirTab,
     pub thumb_textures: Vec<Option<TextureHandle>>,
     pub scroll_accum: f32,
+    /// The two-finger gesture in progress, once it has declared itself.
+    pub gesture: Option<Gesture>,
     pub status: Option<String>,
     pub tool: Tool,
     /// Points of the measurement being drawn, in source pixels.
@@ -273,10 +285,51 @@ fn image_area(ui: &mut Ui, session: &mut Session, state: &mut UiState, actions: 
         .input(|i| i.pointer.hover_pos())
         .or_else(|| response.interact_pointer_pos());
 
+    // Two fingers (touch): pinch zooms about the fingers, drag windows.
+    let multi = ui.input(|i| i.multi_touch()).filter(|m| m.num_touches >= 2);
+    let two_finger = multi.is_some();
+    match multi {
+        Some(m) => {
+            let g = state.gesture.get_or_insert(Gesture::Undecided {
+                zoom_log: 0.0,
+                moved: egui::Vec2::ZERO,
+            });
+            if let Gesture::Undecided { zoom_log, moved } = g {
+                *zoom_log += m.zoom_delta.max(1e-3).ln();
+                *moved += m.translation_delta;
+                if zoom_log.abs() > 0.08 {
+                    *g = Gesture::Zoom;
+                } else if moved.length() > 12.0 {
+                    *g = Gesture::Window;
+                }
+            }
+            match *g {
+                Gesture::Zoom => {
+                    let c = m.center_pos - rect.min;
+                    session.view = session.view.zoom_about(m.zoom_delta, c.x * ppp, c.y * ppp);
+                }
+                Gesture::Window => {
+                    if let Some(f) = &session.frame {
+                        let span = (f.value_range.1 - f.value_range.0).max(1.0);
+                        let d = m.translation_delta;
+                        let (c, w) = session.window;
+                        session.window = (
+                            (c + d.y / rect.height() * span)
+                                .clamp(f.value_range.0, f.value_range.1),
+                            (w + d.x / rect.width() * span).max(1.0),
+                        );
+                    }
+                }
+                Gesture::Undecided { .. } => {}
+            }
+        }
+        None => state.gesture = None,
+    }
+
     // Left button: pan, or draw a measurement.
     match state.tool {
         Tool::Pan => {
-            if response.dragged_by(egui::PointerButton::Primary) {
+            if response.dragged_by(egui::PointerButton::Primary) && !two_finger {
                 let d = response.drag_delta() * ppp;
                 session.view = session.view.pan(d.x, d.y);
             }
@@ -344,7 +397,9 @@ fn image_area(ui: &mut Ui, session: &mut Session, state: &mut UiState, actions: 
         let (scroll, zoom, modifiers) =
             ui.input(|i| (i.smooth_scroll_delta, i.zoom_delta(), i.modifiers));
         let p = pointer.unwrap_or(rect.center()) - rect.min;
-        if zoom != 1.0 {
+        if two_finger {
+            // handled above as a gesture
+        } else if zoom != 1.0 {
             session.view = session.view.zoom_about(zoom, p.x * ppp, p.y * ppp);
         } else if scroll.y != 0.0 {
             if modifiers.alt {
@@ -545,7 +600,11 @@ fn image_area(ui: &mut Ui, session: &mut Session, state: &mut UiState, actions: 
             Color32::from_rgb(0xdd, 0xdd, 0xdd),
         );
         let hint = match state.tool {
-            Tool::Pan => "wheel slices · pinch or Option/Alt+wheel zoom · drag pans · right-drag windows · space plays · 0 fit · 1 1:1 · r/R rotate · h/v flip · i interpolation · w reset window",
+            Tool::Pan => if cfg!(target_os = "ios") {
+                "slider or two-finger flick scrolls slices · pinch zooms · drag pans · two-finger drag windows · Play for cine · 0 fit · 1 1:1 · r/R rotate · h/v flip"
+            } else {
+                "wheel slices · pinch or Option/Alt+wheel zoom · drag pans · right-drag windows · space plays · 0 fit · 1 1:1 · r/R rotate · h/v flip · i interpolation · w reset window"
+            },
             Tool::Length => "Length: drag from one point to the other · Delete removes the last · Escape back to Pan",
             Tool::Angle => "Angle: click the first ray end, the vertex, then the second ray end · Escape back to Pan",
         };
