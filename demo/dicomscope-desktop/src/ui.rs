@@ -5,6 +5,7 @@ use crate::session::{DocumentContent, FhirText, Session};
 use dicomscope_core::dicom::TagRow;
 use dicomscope_core::link::{ChainFinding, KeyConflict, LinkPath, Pair};
 use dicomscope_core::measure::{Measurement, Point};
+#[cfg(feature = "experimental-nerve")]
 use dicomscope_core::nerve::NerveTrace;
 use dicomscope_core::view::Viewport;
 use egui::{Color32, Key, Pos2, RichText, TextureHandle, Ui};
@@ -52,11 +53,15 @@ pub enum Tool {
     Pan,
     Length,
     Angle,
-    /// Mandibular canal tracing: click points, Finish (or Enter) closes it.
+    /// EXPERIMENTAL, behind `experimental-nerve`, off by default: mandibular
+    /// canal tracing. An annotation the dentist draws and checks, never a
+    /// finding. See `dicomscope_core::nerve`.
+    #[cfg(feature = "experimental-nerve")]
     Nerve,
 }
 
 /// Yellow, the colour dental software paints the canal in.
+#[cfg(feature = "experimental-nerve")]
 const NERVE: Color32 = Color32::from_rgb(0xff, 0xd7, 0x00);
 
 /// UI-only state that outlives a frame.
@@ -73,10 +78,12 @@ pub struct UiState {
     pub tool: Tool,
     /// Points of the measurement or trace being drawn, in source pixels.
     pub draft: Vec<Point>,
-    /// A nerve control point being dragged: (trace, point).
+    /// A nerve control point being dragged: (trace, point). EXPERIMENTAL.
+    #[cfg(feature = "experimental-nerve")]
     pub nerve_drag: Option<(usize, usize)>,
     /// How far the finger travelled in the current press, to tell a tap
-    /// from a pan on a touch screen.
+    /// from a pan on a touch screen. Only the nerve tool reads it.
+    #[cfg_attr(not(feature = "experimental-nerve"), allow(dead_code))]
     pub press_travel: f32,
 }
 
@@ -155,29 +162,34 @@ pub fn draw(root: &mut Ui, session: &mut Session, state: &mut UiState) -> Action
                 actions.reload = true;
             }
             ui.separator();
-            for (t, label) in [
-                (Tool::Pan, "Pan"),
-                (Tool::Length, "Length"),
-                (Tool::Angle, "Angle"),
-                (Tool::Nerve, "Nerve"),
-            ] {
+            let tools: Vec<(Tool, &str)> = {
+                #[allow(unused_mut)]
+                let mut v = vec![
+                    (Tool::Pan, "Pan"),
+                    (Tool::Length, "Length"),
+                    (Tool::Angle, "Angle"),
+                ];
+                #[cfg(feature = "experimental-nerve")]
+                v.push((Tool::Nerve, "Nerve (experimental)"));
+                v
+            };
+            for (t, label) in tools {
                 if ui.selectable_label(state.tool == t, label).clicked() {
                     state.tool = t;
                     state.draft.clear();
                 }
             }
-            if state.tool == Tool::Nerve
-                && state.draft.len() >= 2
-                && ui.button("Finish nerve").clicked()
-            {
-                session.push_nerve(NerveTrace::new(std::mem::take(&mut state.draft)));
-            }
             if ui.button("Undo").clicked() {
-                if state.tool == Tool::Nerve {
+                #[cfg(feature = "experimental-nerve")]
+                let handled = state.tool == Tool::Nerve && {
                     if state.draft.pop().is_none() {
                         session.remove_last_nerve();
                     }
-                } else {
+                    true
+                };
+                #[cfg(not(feature = "experimental-nerve"))]
+                let handled = false;
+                if !handled {
                     session.remove_last_measurement();
                 }
             }
@@ -200,9 +212,20 @@ pub fn draw(root: &mut Ui, session: &mut Session, state: &mut UiState) -> Action
                 ui.label(RichText::new(&h.name).weak());
             }
         });
+        #[cfg(feature = "experimental-nerve")]
         if state.tool == Tool::Nerve {
             ui.horizontal(|ui| {
                 ui.label(RichText::new("Nerve").color(NERVE).strong());
+                ui.label(
+                    RichText::new("EXPERIMENTAL")
+                        .color(DANGER)
+                        .strong()
+                        .small(),
+                )
+                .on_hover_text(
+                    "Research code, not validated and not a medical device: \
+                     everything it draws is an annotation you make and check.",
+                );
                 ui.label(format!("{} point(s)", state.draft.len()));
                 let two = state.draft.len() >= 2;
                 if ui
@@ -454,6 +477,7 @@ fn image_area(ui: &mut Ui, session: &mut Session, state: &mut UiState, actions: 
                 }
             }
         }
+        #[cfg(feature = "experimental-nerve")]
         Tool::Nerve => {
             if let Some(p) = pointer.map(to_source) {
                 // Near an existing control point: drag it. Otherwise a
@@ -591,11 +615,14 @@ fn image_area(ui: &mut Ui, session: &mut Session, state: &mut UiState, actions: 
             state.draft.clear();
             state.tool = Tool::Pan;
         }
-        if pressed(Key::F) && state.tool == Tool::Nerve && state.draft.len() >= 2 {
-            find_canal(session, state);
-        }
-        if pressed(Key::Enter) && state.tool == Tool::Nerve && state.draft.len() >= 2 {
-            session.push_nerve(NerveTrace::new(std::mem::take(&mut state.draft)));
+        #[cfg(feature = "experimental-nerve")]
+        if state.tool == Tool::Nerve && state.draft.len() >= 2 {
+            if pressed(Key::F) {
+                find_canal(session, state);
+            }
+            if pressed(Key::Enter) {
+                session.push_nerve(NerveTrace::new(std::mem::take(&mut state.draft)));
+            }
         }
         if pressed(Key::Delete) || pressed(Key::Backspace) {
             if state.draft.is_empty() {
@@ -655,43 +682,46 @@ fn image_area(ui: &mut Ui, session: &mut Session, state: &mut UiState, actions: 
             Color32::from_rgb(0xff, 0xd7, 0x4d),
         );
     };
-    // Nerve canals: a translucent yellow tube of the trace's diameter, its
-    // centre line, control points, and the side and length.
-    let image_w = image.0;
-    let tube_px = |t: &NerveTrace| t.diameter_px(spacing) * view.scale / ppp;
-    let draw_nerve = |painter: &egui::Painter, t: &NerveTrace, settled: bool| {
-        let pts: Vec<Pos2> = t.spline(8).iter().map(|&p| to_screen(p)).collect();
-        if pts.len() < 2 {
-            for p in &pts {
-                painter.circle_filled(*p, 4.0, NERVE);
+    #[cfg(feature = "experimental-nerve")]
+    {
+        // Nerve canals: a translucent yellow tube of the trace's diameter, its
+        // centre line, control points, and the side and length.
+        let image_w = image.0;
+        let tube_px = |t: &NerveTrace| t.diameter_px(spacing) * view.scale / ppp;
+        let draw_nerve = |painter: &egui::Painter, t: &NerveTrace, settled: bool| {
+            let pts: Vec<Pos2> = t.spline(8).iter().map(|&p| to_screen(p)).collect();
+            if pts.len() < 2 {
+                for p in &pts {
+                    painter.circle_filled(*p, 4.0, NERVE);
+                }
+                return;
             }
-            return;
+            let alpha = if settled { 110 } else { 60 };
+            painter.add(egui::Shape::line(
+                pts.clone(),
+                egui::Stroke::new(
+                    tube_px(t).max(2.0),
+                    Color32::from_rgba_unmultiplied(0xff, 0xd7, 0x00, alpha),
+                ),
+            ));
+            painter.add(egui::Shape::line(
+                pts.clone(),
+                egui::Stroke::new(1.0, NERVE),
+            ));
+            for p in &t.points {
+                painter.circle_stroke(to_screen(*p), 4.0, egui::Stroke::new(1.5, NERVE));
+            }
+            if settled {
+                let mid = pts[pts.len() / 2];
+                label(painter, mid, t.label(image_w, spacing));
+            }
+        };
+        for t in session.nerves() {
+            draw_nerve(&painter, t, true);
         }
-        let alpha = if settled { 110 } else { 60 };
-        painter.add(egui::Shape::line(
-            pts.clone(),
-            egui::Stroke::new(
-                tube_px(t).max(2.0),
-                Color32::from_rgba_unmultiplied(0xff, 0xd7, 0x00, alpha),
-            ),
-        ));
-        painter.add(egui::Shape::line(
-            pts.clone(),
-            egui::Stroke::new(1.0, NERVE),
-        ));
-        for p in &t.points {
-            painter.circle_stroke(to_screen(*p), 4.0, egui::Stroke::new(1.5, NERVE));
+        if state.tool == Tool::Nerve && !state.draft.is_empty() {
+            draw_nerve(&painter, &NerveTrace::new(state.draft.clone()), false);
         }
-        if settled {
-            let mid = pts[pts.len() / 2];
-            label(painter, mid, t.label(image_w, spacing));
-        }
-    };
-    for t in session.nerves() {
-        draw_nerve(&painter, t, true);
-    }
-    if state.tool == Tool::Nerve && !state.draft.is_empty() {
-        draw_nerve(&painter, &NerveTrace::new(state.draft.clone()), false);
     }
     for m in session.measurements() {
         let pts: Vec<Pos2> = m.points().iter().map(|&p| to_screen(p)).collect();
@@ -707,7 +737,11 @@ fn image_area(ui: &mut Ui, session: &mut Session, state: &mut UiState, actions: 
         };
         label(&painter, at, m.label(spacing));
     }
-    if state.draft.len() >= 2 && state.tool != Tool::Nerve {
+    #[cfg(feature = "experimental-nerve")]
+    let measuring = state.tool != Tool::Nerve;
+    #[cfg(not(feature = "experimental-nerve"))]
+    let measuring = true;
+    if state.draft.len() >= 2 && measuring {
         let pts: Vec<Pos2> = state.draft.iter().map(|&p| to_screen(p)).collect();
         painter.add(egui::Shape::line(
             pts.clone(),
@@ -787,7 +821,8 @@ fn image_area(ui: &mut Ui, session: &mut Session, state: &mut UiState, actions: 
             },
             Tool::Length => "Length: drag from one point to the other · Delete removes the last · Escape back to Pan",
             Tool::Angle => "Angle: click the first ray end, the vertex, then the second ray end · Escape back to Pan",
-            Tool::Nerve => "Nerve: tap the two foramina, then Find canal (f) · or tap along the canal and Finish (Enter) · drag a point to adjust · Undo",
+            #[cfg(feature = "experimental-nerve")]
+            Tool::Nerve => "Nerve (experimental, not a finding): tap the two foramina, then Find canal (f) · or tap along the canal and Finish (Enter) · drag a point to adjust · Undo",
         };
         painter.text(
             rect.left_bottom() + egui::vec2(8.0, -8.0),
@@ -1006,9 +1041,9 @@ fn window_panel(ui: &mut Ui, session: &mut Session) {
             ui.weak(format!("file: W {dw:.0} L {dc:.0}"));
         }
     });
-    // Traced canals on this image: adjust the tube diameter.
-    let nerve_count = session.nerves().len();
-    for i in 0..nerve_count {
+    // Traced canals on this image: adjust the tube diameter. EXPERIMENTAL.
+    #[cfg(feature = "experimental-nerve")]
+    for i in 0..session.nerves().len() {
         let (label, mut d) = {
             let t = &session.nerves()[i];
             (
@@ -1455,6 +1490,10 @@ fn files_panel(ui: &mut Ui, entries: &[crate::platform::FolderEntry], actions: &
 
 /// Run the canal finder between the two draft points; the result becomes
 /// an editable trace, the draft is cleared, the status says how sure it is.
+///
+/// EXPERIMENTAL, NOT FOR DISTRIBUTION: a proposal for the dentist to edit,
+/// never a finding. See `dicomscope_core::nervefind`.
+#[cfg(feature = "experimental-nerve")]
 fn find_canal(session: &mut Session, state: &mut UiState) {
     // First and last point: the two foramina, whatever was tapped between.
     let (a, b) = (state.draft[0], state.draft[state.draft.len() - 1]);
@@ -1462,7 +1501,7 @@ fn find_canal(session: &mut Session, state: &mut UiState) {
         Ok(c) => {
             state.draft.clear();
             format!(
-                "Canal traced between the points, band confidence {:.0}%. A proposal: check it and drag the points where it strays.",
+                "Experimental: a canal was traced between the points, band confidence {:.0}%. This is a proposal, not a finding: check it and drag the points where it strays.",
                 c * 100.0
             )
         }

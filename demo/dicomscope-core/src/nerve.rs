@@ -1,7 +1,17 @@
+//! EXPERIMENTAL, NOT FOR DISTRIBUTION.
+//!
+//! Behind the `experimental-nerve` feature, which is off by default. This
+//! is research code: it has not been validated against clinical ground
+//! truth, it has had no regulatory assessment, and it is **not a medical
+//! device**. Do not enable the feature in a build that leaves the
+//! development machine, and do not present its output as a finding.
+//! Anything it draws is an annotation the dentist makes and checks.
+//!
 //! Mandibular canal (inferior alveolar nerve) tracing on a panoramic or
 //! CBCT-derived image: the dentist's own tool, a smooth tube through the
 //! points they click, painted yellow by convention. Nothing is detected
-//! here; see the notes on semi-automatic tracing for what could feed it.
+//! here; see [`crate::nervefind`] for the semi-automatic proposal that can
+//! feed it.
 
 use crate::measure::{length_px, Point, Spacing};
 
@@ -28,6 +38,9 @@ impl Side {
 
 /// One traced canal: the clicked points in source pixels, in order from
 /// either end, and the tube diameter.
+///
+/// EXPERIMENTAL, NOT FOR DISTRIBUTION: an annotation the dentist draws and
+/// checks, not a finding. See the module documentation.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct NerveTrace {
     pub points: Vec<Point>,

@@ -1,3 +1,15 @@
+//! EXPERIMENTAL, NOT FOR DISTRIBUTION.
+//!
+//! Behind the `experimental-nerve` feature, which is off by default. This
+//! is research code: unvalidated against clinical ground truth, no
+//! regulatory assessment, **not a medical device**, and known to follow
+//! the wrong structure on a real panoramic radiograph (the airway, the
+//! soft-tissue shadow and the spaces between roots all score as darker
+//! bands than the canal). It exists as the baseline for the
+//! anatomy-constrained version described in `ai_docs/nerve-canal-plan.md`.
+//! Do not enable the feature in a build that leaves the development
+//! machine. Its output is a proposal the dentist edits, never a finding.
+//!
 //! Semi-automatic mandibular canal tracing: between two points the user
 //! marks (the mental and the mandibular foramen), find the path that best
 //! follows a dark band of the canal's width. Classical image analysis, no
@@ -24,6 +36,10 @@ pub struct Found {
 }
 
 /// Find the canal between `a` and `b` on a greyscale image.
+///
+/// EXPERIMENTAL, NOT FOR DISTRIBUTION. The result is a proposal to be
+/// edited by the dentist, not a detection: on a real panoramic it follows
+/// the wrong structure often enough that it must never be shown as truth.
 /// `canal_width_px` is the expected band width in source pixels (3 to 5 mm
 /// at the image's pixel spacing); the search runs in a window around the
 /// two points at a scale where the band is about 8 px wide.

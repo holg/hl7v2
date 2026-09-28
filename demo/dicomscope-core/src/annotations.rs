@@ -4,6 +4,7 @@
 //! the interoperable next step.
 
 use crate::measure::Measurement;
+#[cfg(feature = "experimental-nerve")]
 use crate::nerve::NerveTrace;
 use std::collections::BTreeMap;
 
@@ -12,13 +13,21 @@ use std::collections::BTreeMap;
 pub struct ImageAnnotations {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub measurements: Vec<Measurement>,
+    /// Experimental nerve traces; only with the `experimental-nerve`
+    /// feature. A file written by an experimental build still loads in a
+    /// build without it: the field is ignored.
+    #[cfg(feature = "experimental-nerve")]
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub nerves: Vec<NerveTrace>,
 }
 
 impl ImageAnnotations {
     pub fn is_empty(&self) -> bool {
-        self.measurements.is_empty() && self.nerves.is_empty()
+        #[cfg(feature = "experimental-nerve")]
+        let empty = self.measurements.is_empty() && self.nerves.is_empty();
+        #[cfg(not(feature = "experimental-nerve"))]
+        let empty = self.measurements.is_empty();
+        empty
     }
 }
 
@@ -56,6 +65,7 @@ mod tests {
     #[test]
     fn round_trip_keeps_traces_and_drops_empty_images() {
         let mut a = Annotations::default();
+        #[cfg(feature = "experimental-nerve")]
         a.images
             .entry(key("1.2.3", 0))
             .or_default()
@@ -76,6 +86,7 @@ mod tests {
         let back = Annotations::from_json(&json).unwrap();
         assert_eq!(back.version, VERSION);
         assert_eq!(back.images.len(), 1);
+        #[cfg(feature = "experimental-nerve")]
         assert_eq!(back.images["1.2.3#0"].nerves[0].points.len(), 2);
         assert!(Annotations::from_json("nope").is_err());
     }

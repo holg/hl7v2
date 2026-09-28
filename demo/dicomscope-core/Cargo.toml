@@ -28,6 +28,12 @@ wgpu = { version = "30.0.1", default-features = false, features = ["std", "wgsl"
 [features]
 # Exposes dicom::testutil, the synthetic Part 10 builder, to other crates' tests.
 test-support = []
+# EXPERIMENTAL, OFF BY DEFAULT, NOT FOR DISTRIBUTION.
+# Mandibular canal (inferior alveolar nerve) annotation and the
+# semi-automatic canal finder. Research code: unvalidated against clinical
+# ground truth, no regulatory assessment, not a medical device. Builds that
+# leave this machine must not enable it. See `src/nerve.rs`.
+experimental-nerve = []
 
 [dev-dependencies]
 # Benchmarks (`cargo bench -p dicomscope-core`); no plots, no rayon.

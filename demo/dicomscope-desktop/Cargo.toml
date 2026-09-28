@@ -16,6 +16,13 @@ crate-type = ["rlib", "staticlib"]
 name = "dicomscope-desktop"
 path = "src/main.rs"
 
+[features]
+# EXPERIMENTAL, OFF BY DEFAULT, NOT FOR DISTRIBUTION: the mandibular canal
+# tool and its semi-automatic finder. Research code, not a medical device;
+# see dicomscope-core/src/nerve.rs. Never enable it for a build that is
+# handed to anyone.
+experimental-nerve = ["dicomscope-core/experimental-nerve"]
+
 [dependencies]
 dicomscope-core = { path = "../dicomscope-core" }
 hl7kit = { path = "../../crates/hl7kit" }

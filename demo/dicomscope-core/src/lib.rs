@@ -19,7 +19,11 @@ pub mod fhir;
 pub mod fs;
 pub mod link;
 pub mod measure;
+/// EXPERIMENTAL, NOT FOR DISTRIBUTION: see the module documentation.
+#[cfg(feature = "experimental-nerve")]
 pub mod nerve;
+/// EXPERIMENTAL, NOT FOR DISTRIBUTION: see the module documentation.
+#[cfg(feature = "experimental-nerve")]
 pub mod nervefind;
 pub mod order_gen;
 pub mod render;
