@@ -1,0 +1,51 @@
+[package]
+name = "dicomscope-tui"
+version = "0.1.0"
+description = "dicomscope in the terminal: a ratatui viewer whose images are rendered by wgpu (Metal, Vulkan, DX12, GL) and shown inline, plus scriptable subcommands for tags, HL7 order linkage, FHIR and worklist items"
+publish = false
+readme = "README.md"
+keywords = ["dicom", "hl7", "ratatui", "wgpu", "fhir"]
+categories = ["command-line-utilities", "science", "visualization"]
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[lib]
+name = "dicomscope_tui"
+
+[[bin]]
+name = "dicomscope-tui"
+path = "src/main.rs"
+
+[features]
+# EXPERIMENTAL, OFF BY DEFAULT, NOT FOR DISTRIBUTION: see dicomscope-core.
+experimental-nerve = ["dicomscope-core/experimental-nerve"]
+
+[dependencies]
+dicomscope-core = { path = "../dicomscope-core" }
+hl7kit = { path = "../../crates/hl7kit" }
+serde_json = "1"
+clap = { version = "4.6", features = ["derive", "wrap_help"] }
+# Native backends only, as on the desktop.
+wgpu = { version = "30.0.1", default-features = false, features = ["std", "wgsl", "vulkan", "metal", "dx12", "gles"] }
+pollster = "0.4"
+ratatui = { version = "0.30.1", default-features = false, features = ["crossterm"] }
+crossterm = "0.29"
+# Kitty, iTerm2 and sixel graphics, half blocks everywhere else.
+ratatui-image = { version = "11.1", default-features = false, features = ["crossterm"] }
+image = { version = "0.25.6", default-features = false, features = ["png"] }
+# Window mode: the same ratatui UI drawn by wgpu into a native window, the
+# image composited into it on the GPU at full resolution.
+ratatui-wgpu = { version = "0.6", default-features = false, features = ["ahash"] }
+winit = "0.30.13"
+
+[dev-dependencies]
+dicomscope-core = { path = "../dicomscope-core", features = ["test-support"] }
+
+# The bundled font, Cascadia Mono (SIL Open Font License 1.1, see
+# fonts/CascadiaOFL.txt), ships inside the binary for window mode.
+
+[package.metadata.docs.rs]
+all-features = false
+rustdoc-args = ["--cfg", "docsrs"]

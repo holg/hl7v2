@@ -58,11 +58,25 @@ impl Default for Uniforms {
     }
 }
 
+/// Where a [`Renderer`] draws: a window surface the app created, an
+/// offscreen texture that is read back to memory (terminals, exports), or
+/// views that another library owns and hands to [`Renderer::draw_image_over`].
+enum Target {
+    Surface(wgpu::Surface<'static>),
+    Offscreen(wgpu::Texture),
+    External,
+}
+
+/// The offscreen format. sRGB, like the surfaces the desktop gets on Metal
+/// and Vulkan, so a read-back image matches what a window shows.
+pub const OFFSCREEN_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
+
 pub struct Renderer {
     device: wgpu::Device,
     queue: wgpu::Queue,
-    surface: wgpu::Surface<'static>,
+    target: Target,
     config: wgpu::SurfaceConfiguration,
+    adapter: wgpu::AdapterInfo,
     pipeline: wgpu::RenderPipeline,
     layout: wgpu::BindGroupLayout,
     uniform: wgpu::Buffer,
@@ -87,28 +101,95 @@ impl Renderer {
             })
             .await
             .map_err(|e| AppError::NoWebGpu(e.to_string()))?;
-        // No optional features: R32Float with textureLoad needs none, and
-        // requiring any would exclude adapters for no benefit. Limits: the
-        // downlevel baseline, but with the adapter's texture sizes, because
-        // the baseline's 2048 px would refuse a 4000 px mammogram and a
-        // high-DPI window surface alike.
-        let (device, queue) = adapter
-            .request_device(&wgpu::DeviceDescriptor {
-                label: Some("dicomscope"),
-                required_features: wgpu::Features::empty(),
-                required_limits: wgpu::Limits::downlevel_defaults()
-                    .using_resolution(adapter.limits()),
-                ..Default::default()
-            })
-            .await
-            .map_err(|e| AppError::Gpu(format!("device request failed: {e}")))?;
-
+        let (device, queue) = request_device(&adapter).await?;
         let mut config = surface
             .get_default_config(&adapter, width.max(1), height.max(1))
             .ok_or_else(|| AppError::Gpu("surface has no supported texture format".into()))?;
         config.present_mode = wgpu::PresentMode::Fifo;
         surface.configure(&device, &config);
+        Ok(Self::build(
+            device,
+            queue,
+            Target::Surface(surface),
+            config,
+            adapter.get_info(),
+        ))
+    }
 
+    /// A renderer without a window: it draws into an offscreen texture of
+    /// `width` by `height` pixels, which [`Renderer::read_rgba`] copies
+    /// back. Any backend the instance allows will do: Metal on a Mac,
+    /// Vulkan, DX12 or GL elsewhere.
+    pub async fn headless(
+        instance: &wgpu::Instance,
+        width: u32,
+        height: u32,
+    ) -> Result<Renderer, AppError> {
+        let adapter = instance
+            .request_adapter(&wgpu::RequestAdapterOptions {
+                power_preference: wgpu::PowerPreference::HighPerformance,
+                ..Default::default()
+            })
+            .await
+            .map_err(|e| AppError::NoWebGpu(e.to_string()))?;
+        let (device, queue) = request_device(&adapter).await?;
+        let config = wgpu::SurfaceConfiguration {
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+            format: OFFSCREEN_FORMAT,
+            width: width.max(1),
+            height: height.max(1),
+            present_mode: wgpu::PresentMode::Fifo,
+            desired_maximum_frame_latency: 2,
+            alpha_mode: wgpu::CompositeAlphaMode::Opaque,
+            view_formats: vec![],
+            color_space: wgpu::SurfaceColorSpace::Auto,
+        };
+        let texture = offscreen_texture(&device, &config);
+        Ok(Self::build(
+            device,
+            queue,
+            Target::Offscreen(texture),
+            config,
+            adapter.get_info(),
+        ))
+    }
+
+    /// A renderer on a device someone else opened, drawing into targets of
+    /// `format` that they own: a UI library's window surface, say. It has
+    /// no surface of its own; draw with [`Renderer::draw_image_over`] into
+    /// the view they provide, and keep the size in step with [`resize`].
+    ///
+    /// [`resize`]: Renderer::resize
+    pub fn on_device(
+        device: wgpu::Device,
+        queue: wgpu::Queue,
+        format: wgpu::TextureFormat,
+        width: u32,
+        height: u32,
+    ) -> Renderer {
+        let config = wgpu::SurfaceConfiguration {
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            format,
+            width: width.max(1),
+            height: height.max(1),
+            present_mode: wgpu::PresentMode::Fifo,
+            desired_maximum_frame_latency: 2,
+            alpha_mode: wgpu::CompositeAlphaMode::Opaque,
+            view_formats: vec![],
+            color_space: wgpu::SurfaceColorSpace::Auto,
+        };
+        let adapter = device.adapter_info();
+        Self::build(device, queue, Target::External, config, adapter)
+    }
+
+    /// Pipeline, bind group layout and uniforms for a device and target.
+    fn build(
+        device: wgpu::Device,
+        queue: wgpu::Queue,
+        target: Target,
+        config: wgpu::SurfaceConfiguration,
+        adapter: wgpu::AdapterInfo,
+    ) -> Renderer {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("window"),
             source: wgpu::ShaderSource::Wgsl(super::SHADER.into()),
@@ -175,17 +256,18 @@ impl Renderer {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
 
-        Ok(Renderer {
+        Renderer {
             device,
             queue,
-            surface,
+            target,
             config,
+            adapter,
             pipeline,
             layout,
             uniform,
             bind_group: None,
             uniforms,
-        })
+        }
     }
 
     /// Match the surface to a new canvas size (device pixels).
@@ -196,7 +278,11 @@ impl Renderer {
         }
         self.config.width = w;
         self.config.height = h;
-        self.surface.configure(&self.device, &self.config);
+        match &mut self.target {
+            Target::Surface(surface) => surface.configure(&self.device, &self.config),
+            Target::Offscreen(texture) => *texture = offscreen_texture(&self.device, &self.config),
+            Target::External => {}
+        }
     }
 
     /// Upload a frame as an `R32Float` (greyscale) or `Rgba8Unorm` (colour)
@@ -293,14 +379,87 @@ impl Renderer {
         (self.config.width, self.config.height)
     }
 
+    /// The adapter in use: its name and backend (Metal, Vulkan, DX12, GL).
+    pub fn adapter_info(&self) -> &wgpu::AdapterInfo {
+        &self.adapter
+    }
+
+    /// Draw the current frame into the offscreen texture and copy it back
+    /// as tightly packed sRGB RGBA8 rows, `width * height * 4` bytes.
+    /// Fails for a renderer made with [`Renderer::new`].
+    pub fn read_rgba(&mut self) -> Result<Vec<u8>, AppError> {
+        let Target::Offscreen(texture) = &self.target else {
+            return Err(AppError::Gpu("read_rgba needs a headless renderer".into()));
+        };
+        let (w, h) = (self.config.width, self.config.height);
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("offscreen"),
+            });
+        self.draw_image(&mut encoder, &view, None);
+        let align = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
+        let padded = (w * 4).div_ceil(align) * align;
+        let buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("readback"),
+            size: u64::from(padded) * u64::from(h),
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        encoder.copy_texture_to_buffer(
+            texture.as_image_copy(),
+            wgpu::TexelCopyBufferInfo {
+                buffer: &buffer,
+                layout: wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(padded),
+                    rows_per_image: Some(h),
+                },
+            },
+            wgpu::Extent3d {
+                width: w,
+                height: h,
+                depth_or_array_layers: 1,
+            },
+        );
+        self.queue.submit(std::iter::once(encoder.finish()));
+        let slice = buffer.slice(..);
+        let (tx, rx) = std::sync::mpsc::channel();
+        slice.map_async(wgpu::MapMode::Read, move |r| {
+            let _ = tx.send(r);
+        });
+        self.device
+            .poll(wgpu::PollType::wait_indefinitely())
+            .map_err(|e| AppError::Gpu(format!("readback poll failed: {e}")))?;
+        rx.recv()
+            .map_err(|e| AppError::Gpu(format!("readback lost: {e}")))?
+            .map_err(|e| AppError::Gpu(format!("readback map failed: {e}")))?;
+        let mapped = slice
+            .get_mapped_range()
+            .map_err(|e| AppError::Gpu(format!("readback range failed: {e}")))?;
+        let row = (w * 4) as usize;
+        let mut out = Vec::with_capacity(row * h as usize);
+        for chunk in mapped.chunks(padded as usize).take(h as usize) {
+            out.extend_from_slice(&chunk[..row]);
+        }
+        drop(mapped);
+        buffer.unmap();
+        Ok(out)
+    }
+
     /// The next surface texture, or `None` when the surface had to be
-    /// reconfigured (the caller draws again on the next frame).
+    /// reconfigured (the caller draws again on the next frame). Always
+    /// `None` for a headless renderer.
     pub fn acquire(&mut self) -> Option<wgpu::SurfaceTexture> {
-        match self.surface.get_current_texture() {
+        let Target::Surface(surface) = &self.target else {
+            return None;
+        };
+        match surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(t)
             | wgpu::CurrentSurfaceTexture::Suboptimal(t) => Some(t),
             wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
-                self.surface.configure(&self.device, &self.config);
+                surface.configure(&self.device, &self.config);
                 None
             }
             _ => None,
@@ -344,6 +503,34 @@ impl Renderer {
         view: &wgpu::TextureView,
         region: Option<(u32, u32, u32, u32)>,
     ) {
+        self.image_pass(
+            encoder,
+            view,
+            region,
+            wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+        );
+    }
+
+    /// Like [`Renderer::draw_image`], but on top of what the target already
+    /// holds: only `region` changes, filled with the frame on the shader's
+    /// background. Nothing is drawn before a frame is uploaded. For drawing
+    /// the image after a UI that was rendered first.
+    pub fn draw_image_over(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        view: &wgpu::TextureView,
+        region: (u32, u32, u32, u32),
+    ) {
+        self.image_pass(encoder, view, Some(region), wgpu::LoadOp::Load);
+    }
+
+    fn image_pass(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        view: &wgpu::TextureView,
+        region: Option<(u32, u32, u32, u32)>,
+        load: wgpu::LoadOp<wgpu::Color>,
+    ) {
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("window"),
@@ -352,7 +539,7 @@ impl Renderer {
                     depth_slice: None,
                     resolve_target: None,
                     ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                        load,
                         store: wgpu::StoreOp::Store,
                     },
                 })],
@@ -383,6 +570,42 @@ impl Renderer {
             }
         }
     }
+}
+
+/// A device on any adapter, with or without a surface.
+async fn request_device(adapter: &wgpu::Adapter) -> Result<(wgpu::Device, wgpu::Queue), AppError> {
+    // No optional features: R32Float with textureLoad needs none, and
+    // requiring any would exclude adapters for no benefit. Limits: the
+    // downlevel baseline, but with the adapter's texture sizes, because
+    // the baseline's 2048 px would refuse a 4000 px mammogram and a
+    // high-DPI window surface alike.
+    adapter
+        .request_device(&wgpu::DeviceDescriptor {
+            label: Some("dicomscope"),
+            required_features: wgpu::Features::empty(),
+            required_limits: wgpu::Limits::downlevel_defaults().using_resolution(adapter.limits()),
+            ..Default::default()
+        })
+        .await
+        .map_err(|e| AppError::Gpu(format!("device request failed: {e}")))
+}
+
+/// The render target of a headless renderer, sized and typed by `config`.
+fn offscreen_texture(device: &wgpu::Device, config: &wgpu::SurfaceConfiguration) -> wgpu::Texture {
+    device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("offscreen"),
+        size: wgpu::Extent3d {
+            width: config.width,
+            height: config.height,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: config.format,
+        usage: config.usage,
+        view_formats: &[],
+    })
 }
 
 /// Lay out sample bytes row by row with each row padded to a multiple of

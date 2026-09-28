@@ -27,6 +27,9 @@ pub mod nerve;
 pub mod nervefind;
 pub mod order_gen;
 pub mod render;
+/// Native only: it reads studies and orders from the file system.
+#[cfg(not(target_arch = "wasm32"))]
+pub mod session;
 pub mod thumbnail;
 pub mod view;
 pub mod worklist;

@@ -1,19 +1,22 @@
-//! The desktop app's state and every operation on it, free of egui and
-//! winit so it can be tested on the host like the core it drives.
+//! A viewing session: the open study, the slice on screen, the order and
+//! everything derived from both. Free of any UI toolkit, so the desktop
+//! app, the terminal app and the tests all drive the same state.
 
-use dicomscope_core::annotations::{self, Annotations, ImageAnnotations};
-use dicomscope_core::dicom::pixels::FrameInfo;
-use dicomscope_core::dicom::sr;
-use dicomscope_core::dicom::{self, Frame, Study, StudySet, TagRow};
-use dicomscope_core::fhir::{self, FhirInput};
-use dicomscope_core::link::{self, Chain, Linkage, WorklistKeys};
-use dicomscope_core::measure::{Measurement, Spacing};
-use dicomscope_core::nerve::NerveTrace;
-use dicomscope_core::nervefind;
-use dicomscope_core::thumbnail::{thumbnail, Thumbnail};
-use dicomscope_core::view::Viewport;
-use dicomscope_core::worklist::{self, WorklistOutput};
-use dicomscope_core::{fs, AppError};
+use crate::annotations::{self, Annotations, ImageAnnotations};
+use crate::dicom::pixels::FrameInfo;
+use crate::dicom::sr;
+use crate::dicom::{self, Frame, Study, StudySet, TagRow};
+use crate::fhir::{self, FhirInput};
+use crate::link::{self, Chain, Linkage, WorklistKeys};
+use crate::measure::{Measurement, Spacing};
+#[cfg(feature = "experimental-nerve")]
+use crate::nerve::NerveTrace;
+#[cfg(feature = "experimental-nerve")]
+use crate::nervefind;
+use crate::thumbnail::{thumbnail, Thumbnail};
+use crate::view::Viewport;
+use crate::worklist::{self, WorklistOutput};
+use crate::{fs, AppError};
 use hl7kit::order::{Order, OrderField};
 use hl7kit::{Message, Span};
 use std::collections::HashMap;
@@ -82,7 +85,8 @@ pub struct Session {
     pub document: Option<(usize, DocumentContent)>,
     /// Measurements per (file, frame), kept while scrolling.
     marks: HashMap<(usize, u32), Vec<Measurement>>,
-    /// Nerve traces per (file, frame).
+    /// Nerve traces per (file, frame). EXPERIMENTAL, see the core module.
+    #[cfg(feature = "experimental-nerve")]
     nerves: HashMap<(usize, u32), Vec<NerveTrace>>,
     /// Where measurements and traces are saved, next to the study.
     annotations_path: Option<PathBuf>,
@@ -169,6 +173,7 @@ impl Session {
             Ok::<_, String>(acc)
         });
         self.marks.clear();
+        #[cfg(feature = "experimental-nerve")]
         self.nerves.clear();
         self.playing = false;
         self.document = None;
@@ -246,8 +251,8 @@ impl Session {
                 self.study = Some(study);
                 self.tags = tags;
                 self.gray = match &frame.pixels {
-                    dicomscope_core::dicom::Pixels::Gray(g) => Some(std::sync::Arc::new(g.clone())),
-                    dicomscope_core::dicom::Pixels::Rgba(_) => None,
+                    crate::dicom::Pixels::Gray(g) => Some(std::sync::Arc::new(g.clone())),
+                    crate::dicom::Pixels::Rgba(_) => None,
                 };
                 self.pending = Some(frame);
                 self.error = None;
@@ -447,21 +452,26 @@ impl Session {
 
     pub fn clear_measurements(&mut self) {
         self.marks.remove(&self.key);
+        #[cfg(feature = "experimental-nerve")]
         self.nerves.remove(&self.key);
         self.save_annotations();
     }
 
-    // --- nerve traces ---
+    // --- nerve traces: EXPERIMENTAL, behind `experimental-nerve` ---
 
+    #[cfg(feature = "experimental-nerve")]
+    #[cfg(feature = "experimental-nerve")]
     pub fn nerves(&self) -> &[NerveTrace] {
         self.nerves.get(&self.key).map(Vec::as_slice).unwrap_or(&[])
     }
 
+    #[cfg(feature = "experimental-nerve")]
     pub fn push_nerve(&mut self, t: NerveTrace) {
         self.nerves.entry(self.key).or_default().push(t);
         self.save_annotations();
     }
 
+    #[cfg(feature = "experimental-nerve")]
     pub fn remove_last_nerve(&mut self) {
         if let Some(v) = self.nerves.get_mut(&self.key) {
             v.pop();
@@ -470,6 +480,7 @@ impl Session {
     }
 
     /// Move one control point of one trace; saved when the drag ends.
+    #[cfg(feature = "experimental-nerve")]
     pub fn move_nerve_point(&mut self, trace: usize, point: usize, to: (f32, f32)) {
         if let Some(p) = self
             .nerves
@@ -481,6 +492,7 @@ impl Session {
         }
     }
 
+    #[cfg(feature = "experimental-nerve")]
     pub fn set_nerve_diameter(&mut self, trace: usize, diameter_mm: f32) {
         if let Some(t) = self
             .nerves
@@ -495,6 +507,7 @@ impl Session {
     /// Find the canal between two points on the current image and add it
     /// as a trace. The expected canal width comes from the pixel spacing
     /// (3.5 mm), else a guess for a panoramic image.
+    #[cfg(feature = "experimental-nerve")]
     pub fn detect_nerve(&mut self, a: (f32, f32), b: (f32, f32)) -> Result<f32, String> {
         let (Some(gray), Some(f)) = (&self.gray, &self.frame) else {
             return Err("no greyscale image on screen".into());
@@ -524,17 +537,20 @@ impl Session {
 
     fn annotations(&self) -> Annotations {
         let mut a = Annotations::default();
-        let keys: std::collections::BTreeSet<(usize, u32)> = self
-            .marks
-            .keys()
-            .chain(self.nerves.keys())
-            .copied()
-            .collect();
+        let keys: std::collections::BTreeSet<(usize, u32)> = {
+            let keys = self.marks.keys();
+            #[cfg(feature = "experimental-nerve")]
+            let keys = keys.chain(self.nerves.keys());
+            keys.copied().collect()
+        };
         for k in keys {
             let Some(uid) = self.sop_uid(k) else { continue };
             let entry = a.images.entry(annotations::key(&uid, k.1)).or_default();
             entry.measurements = self.marks.get(&k).cloned().unwrap_or_default();
-            entry.nerves = self.nerves.get(&k).cloned().unwrap_or_default();
+            #[cfg(feature = "experimental-nerve")]
+            {
+                entry.nerves = self.nerves.get(&k).cloned().unwrap_or_default();
+            }
         }
         a
     }
@@ -576,6 +592,7 @@ impl Session {
                 if !img.measurements.is_empty() {
                     self.marks.insert(key, img.measurements.clone());
                 }
+                #[cfg(feature = "experimental-nerve")]
                 if !img.nerves.is_empty() {
                     self.nerves.insert(key, img.nerves.clone());
                 }
@@ -684,7 +701,7 @@ fn annotations_path_for(study_path: &str) -> PathBuf {
 mod tests {
     use super::*;
 
-    use dicomscope_core::dicom::testutil::Synthetic;
+    use crate::dicom::testutil::Synthetic;
 
     const SAMPLES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../samples");
 
@@ -692,7 +709,7 @@ mod tests {
     /// committed, the HL7 orders are.
     fn synthetic_study(name: &str) -> String {
         let dir =
-            std::env::temp_dir().join(format!("dicomscope-desktop-{name}-{}", std::process::id()));
+            std::env::temp_dir().join(format!("dicomscope-session-{name}-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("1.dcm");
         std::fs::write(&path, Synthetic::default().build()).unwrap();
@@ -723,7 +740,7 @@ mod tests {
     #[test]
     fn cine_steps_on_the_clock_and_measurements_stay_with_their_slice() {
         let dir =
-            std::env::temp_dir().join(format!("dicomscope-desktop-cine-{}", std::process::id()));
+            std::env::temp_dir().join(format!("dicomscope-session-cine-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("mf.dcm");
         std::fs::write(
@@ -778,8 +795,11 @@ mod tests {
         let mut s = Session::new();
         s.set_canvas((100, 100));
         s.open_study(&path);
-        assert!(s.nerves().is_empty());
-        s.push_nerve(NerveTrace::new(vec![(0.0, 0.0), (2.0, 1.0)]));
+        #[cfg(feature = "experimental-nerve")]
+        {
+            assert!(s.nerves().is_empty());
+            s.push_nerve(NerveTrace::new(vec![(0.0, 0.0), (2.0, 1.0)]));
+        }
         s.push_measurement(Measurement::Length {
             a: (0.0, 0.0),
             b: (3.0, 4.0),
@@ -792,6 +812,7 @@ mod tests {
         let mut again = Session::new();
         again.set_canvas((100, 100));
         again.open_study(&path);
+        #[cfg(feature = "experimental-nerve")]
         assert_eq!(again.nerves().len(), 1);
         assert_eq!(again.measurements().len(), 1);
     }

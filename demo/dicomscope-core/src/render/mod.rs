@@ -4,7 +4,7 @@
 
 pub mod gpu;
 
-pub use gpu::{Renderer, Uniforms};
+pub use gpu::{Renderer, Uniforms, OFFSCREEN_FORMAT};
 
 /// The WGSL source, kept here so the host test and the renderer share it.
 pub const SHADER: &str = include_str!("shader.wgsl");

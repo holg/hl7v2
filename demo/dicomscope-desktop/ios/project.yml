@@ -1,4 +1,4 @@
-# xcodegen spec for the iPad build. `xcodegen generate` writes the Xcode
+# xcodegen spec for the iPhone, iPad and Mac builds. `xcodegen generate` writes the Xcode
 # project; the Rust library is built by a script phase and linked in. The
 # generated project and the build folder are not committed.
 name: dicomscope
@@ -6,6 +6,7 @@ options:
   createIntermediateGroups: true
   deploymentTarget:
     iOS: "15.0"
+    macOS: "12.0"
 settings:
   base:
     DEVELOPMENT_TEAM: U4GT5CZ7J7
@@ -23,7 +24,7 @@ targets:
       properties:
         CFBundleDisplayName: dicomscope
         CFBundleShortVersionString: "0.1.0"
-        CFBundleVersion: "16"
+        CFBundleVersion: "17"
         UILaunchScreen: {}
         UIRequiresFullScreen: true
         UIStatusBarHidden: true
@@ -67,7 +68,7 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: eu.iesna.dicomscope
-        TARGETED_DEVICE_FAMILY: "2"
+        TARGETED_DEVICE_FAMILY: "1,2"
         LIBRARY_SEARCH_PATHS:
           - "$(SRCROOT)/../../../target/aarch64-apple-ios/native"
         OTHER_LDFLAGS:
@@ -95,4 +96,56 @@ targets:
           cd "$SRCROOT/../../.."
           cargo build --profile native -p dicomscope-desktop --lib --target aarch64-apple-ios
         # Always run: cargo decides what is stale, Xcode must not.
+        alwaysOutOfDate: true
+  # The native Mac app from the same library: AppKit window, Metal surface,
+  # the desktop file dialogs. Run it from the dicomscope-mac scheme.
+  dicomscope-mac:
+    type: application
+    platform: macOS
+    deploymentTarget: "12.0"
+    sources:
+      - main.c
+    info:
+      path: Info-mac.plist
+      properties:
+        CFBundleName: dicomscope
+        CFBundleDisplayName: dicomscope
+        CFBundleShortVersionString: "0.1.0"
+        CFBundleVersion: "17"
+        LSApplicationCategoryType: public.app-category.medical
+        NSHighResolutionCapable: true
+        NSPrincipalClass: NSApplication
+    settings:
+      base:
+        PRODUCT_NAME: dicomscope
+        PRODUCT_BUNDLE_IDENTIFIER: eu.iesna.dicomscope.mac
+        ARCHS: arm64
+        LIBRARY_SEARCH_PATHS:
+          - "$(SRCROOT)/../../../target/aarch64-apple-darwin/native"
+        OTHER_LDFLAGS:
+          - "-ldicomscope_desktop"
+          - "-framework"
+          - AppKit
+          - "-framework"
+          - Carbon
+          - "-framework"
+          - Metal
+          - "-framework"
+          - QuartzCore
+          - "-framework"
+          - CoreGraphics
+          - "-framework"
+          - Foundation
+          - "-framework"
+          - CoreFoundation
+          - "-framework"
+          - Security
+    preBuildScripts:
+      - name: Build the Rust library
+        shell: /bin/sh
+        script: |
+          set -e
+          export PATH="$HOME/.cargo/bin:$PATH"
+          cd "$SRCROOT/../../.."
+          cargo build --profile native -p dicomscope-desktop --lib --target aarch64-apple-darwin
         alwaysOutOfDate: true

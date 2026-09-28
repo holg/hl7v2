@@ -154,17 +154,24 @@ impl App {
             size_in_pixels: [w, h],
             pixels_per_point: ppp,
         };
-        for (id, deltas) in &output.textures_delta.set {
-            for delta in deltas {
+        // Drained, not borrowed: epaint asserts in debug builds that a
+        // TexturesDelta is empty when it is dropped.
+        let mut textures = output.textures_delta;
+        for (id, deltas) in textures.set.drain() {
+            for delta in &deltas {
                 gpu.egui_renderer.update_texture(
                     gpu.renderer.device(),
                     gpu.renderer.queue(),
-                    *id,
+                    id,
                     delta,
                 );
             }
         }
+        let freed: Vec<_> = textures.free.drain().collect();
         let Some(target) = gpu.renderer.acquire() else {
+            for id in &freed {
+                gpu.egui_renderer.free_texture(id);
+            }
             gpu.window.request_redraw();
             return;
         };
@@ -232,7 +239,7 @@ impl App {
             gpu.egui_renderer.render(&mut pass, &primitives, &screen);
         }
         gpu.renderer.present(encoder, target);
-        for id in &output.textures_delta.free {
+        for id in &freed {
             gpu.egui_renderer.free_texture(id);
         }
 
