@@ -140,6 +140,33 @@ Timezone rule, in one line: a time of day is emitted only when an offset is
 known, (0008,0201) for DICOM or the trailing `±ZZZZ` for HL7; otherwise the
 date alone, because a naive `dateTime` is invalid FHIR.
 
+Input rules, because the sources are not trusted to be well formed:
+
+- Dates are real calendar dates (`20230229` is refused, leap years
+  included). A DICOM DA, TM and offset are three attributes, so a bad time
+  or offset drops the time and keeps the date; an HL7 DTM is one value, so
+  a bad zone, an out-of-range time or a malformed fraction refuses the
+  whole value (`2026-09-05` is not the year 2026 with a broken zone).
+- A UID is emitted only when it is one (PS3.5 9.1: dotted decimal, no
+  leading zeros, at most 64 characters, padding ignored); `urn:oid:` needs
+  an OID. A series or instance whose UID is not a UID is left out of
+  `ImagingStudy`, and the counts say what is listed.
+- Every string is trimmed and stripped of the control characters FHIR
+  forbids; an element that ends up empty, or that carries HL7's explicit
+  null `""`, is omitted, never emitted empty.
+- Modality codes must be CS tokens; the scanner's `?` placeholder is not
+  one and is dropped.
+
+Every bundle then goes through `fhir::validate::check`, an in-process
+structural check (fullUrl and reference resolution, no empty or null
+elements, URI and OID grammar, FHIR `date`/`dateTime` shape, R4 value sets
+for `status`, `intent` and `gender`, `ImagingStudy` counts against the
+listed series). It is not a FHIR validator; it is the set of rules a
+generator can break by accident, and `cargo test` holds every sample order
+and a property-tested fuzz of the study header to it. The CLI runs the same
+check and exits non-zero on a problem, so the Java validator in CI only
+ever sees bundles that are structurally sound.
+
 `ImagingStudy.basedOn` is set only when the study actually linked to the
 order; an unlinked study asserts no relationship. The link panel's third
 column shows where every identifier lands in the bundle, together with the
@@ -182,9 +209,19 @@ stay:
 The validator is a development tool and is not part of the demo; the page
 still makes no network request.
 
+What the mapping costs is measured, not guessed: `cargo bench -p
+dicomscope-core --bench fhir` (Criterion, `benches/fhir.rs`) times the
+bundle for each sample order, the `ImagingStudy` at 1 to 10 000 instances,
+the structural check, JSON serialisation and the individual parsers. On an
+Apple Silicon laptop a three-resource bundle maps in about 70 µs, parse to
+JSON end to end in about 145 µs, and `ImagingStudy` scales linearly at
+roughly 300 000 instances per second; the check on a 1 000-instance bundle
+takes about 1.8 ms.
+
 This runs on every commit: `.github/workflows/fhir.yml` builds the host
-tool, generates the three sample bundles, validates them, and fails the
-build on any error. The Pages workflow publishes the bundles, the validator
+tool, generates the four sample bundles (ORM, OMI, the patient mismatch and
+the ORU result), validates them, and fails the build on any error. The
+Pages workflow publishes the bundles, the validator
 output and its OperationOutcome at <https://holg.github.io/hl7v2/fhir/>, so
 the claim above can be checked against the current commit rather than
 against this paragraph.

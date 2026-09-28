@@ -542,6 +542,14 @@ fn fhir_command(args: &[String]) -> Result<(), String> {
     let bundle = fhir::bundle(&input);
     let json = serde_json::to_string_pretty(&bundle).map_err(|e| e.to_string())?;
 
+    // The in-process structural check runs before anything is written, so
+    // a bundle the HL7 validator would reject on shape never leaves here.
+    // The JSON still goes out when asked for, so the failure can be read.
+    let problems = fhir::validate::check(&bundle);
+    for p in &problems {
+        eprintln!("bundle problem: {p}");
+    }
+
     eprintln!(
         "study {:?}: {} series, {} slices; order {}: study UID from {}, accession from {}",
         set.study_uid.as_deref().unwrap_or(""),
@@ -581,6 +589,12 @@ fn fhir_command(args: &[String]) -> Result<(), String> {
             eprintln!("wrote {file}");
         }
         None => println!("{json}"),
+    }
+    if !problems.is_empty() {
+        return Err(format!(
+            "the bundle failed {} structural check(s); see above",
+            problems.len()
+        ));
     }
     Ok(())
 }

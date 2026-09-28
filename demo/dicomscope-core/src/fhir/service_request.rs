@@ -6,7 +6,7 @@
 
 use super::datetime::hl7_datetime;
 use super::ids::{
-    plain_identifier, reference, typed_identifier, uid_identifier, Authority, Refs,
+    fhir_string, plain_identifier, reference, typed_identifier, uid_identifier, Authority, Refs,
     SERVICE_REQUEST_ID,
 };
 use hl7kit::order::Order;
@@ -39,22 +39,22 @@ pub fn service_request(msg: &Message, order: &Order, refs: &Refs) -> Value {
     }
     // OBR-18 (or IPC-1.1 for OMI): accession. No universal system exists for
     // a hospital's accession namespace; IPC-1.2 supplies one when present.
-    if let Some(acc) = &order.accession {
+    if let Some(acc) = order.accession.as_deref().and_then(fhir_string) {
         let authority = match order.source_path(hl7kit::order::OrderField::Accession) {
             Some("IPC-1.1") => Authority::from_hd(ei_authority(msg, "IPC-1").as_deref()),
             _ => Authority::default(),
         };
-        identifiers.push(typed_identifier("ACSN", "Accession ID", acc, &authority));
+        identifiers.push(typed_identifier("ACSN", "Accession ID", &acc, &authority));
     }
     // IPC-3.1 or ZDS-1.1: the Study Instance UID as urn:dicom:uid. This is
-    // the row generic v2-to-FHIR mappers leave out.
+    // the row generic v2-to-FHIR mappers leave out. Not a UID, not emitted.
     if let Some(uid) = &order.study_uid {
-        identifiers.push(uid_identifier(uid));
+        identifiers.extend(uid_identifier(uid));
     }
     // OBR-19 / IPC-2.1: Requested Procedure ID. v2-0203 has no type code for
     // it, so it is carried untyped rather than given an invented type.
-    if let Some(rp) = &order.procedure_id {
-        identifiers.push(plain_identifier(rp));
+    if let Some(rp) = order.procedure_id.as_deref().and_then(fhir_string) {
+        identifiers.push(plain_identifier(&rp));
     }
     if !identifiers.is_empty() {
         sr["identifier"] = json!(identifiers);
@@ -107,10 +107,10 @@ fn status(orc1: Option<&str>) -> &'static str {
     }
 }
 
+/// A decoded, trimmed component with control characters removed; `None`
+/// when absent, blank or the HL7 null `""`.
 fn component(msg: &Message, path: &str) -> Option<String> {
-    msg.get_decoded(path)
-        .map(|v| v.trim().to_string())
-        .filter(|v| !v.is_empty())
+    msg.get_decoded(path).and_then(|v| fhir_string(&v))
 }
 
 /// EI components 2..4 as an HD (`namespace^universal id^type`).
@@ -149,9 +149,203 @@ mod tests {
     fn statuses() {
         assert_eq!(status(Some("NW")), "active");
         assert_eq!(status(Some("XO")), "active");
+        assert_eq!(status(Some("SC")), "active", "status change");
+        assert_eq!(status(Some("SN")), "active");
+        assert_eq!(status(Some("OK")), "active");
         assert_eq!(status(Some("CA")), "revoked");
         assert_eq!(status(Some("dc")), "revoked");
+        assert_eq!(status(Some("OC")), "revoked");
+        assert_eq!(status(Some(" ca ")), "revoked", "padding");
+        assert_eq!(status(Some("HD")), "on-hold");
+        assert_eq!(status(Some("hd")), "on-hold");
+        assert_eq!(status(Some("")), "active");
+        assert_eq!(
+            status(Some("ZZ")),
+            "active",
+            "unknown code: the order reached imaging"
+        );
         assert_eq!(status(None), "active");
+    }
+
+    fn parse(segments: &str) -> (Message, Order) {
+        let text = format!(
+            "MSH|^~\\&|RIS|HOSP|||20260905||ORM^O01|1|P|2.5.1\rPID|1||P1^^^HOSP^MR\r{segments}"
+        );
+        let msg = Message::parse(text).unwrap();
+        let order = Order::extract(&msg);
+        (msg, order)
+    }
+
+    fn sr(segments: &str) -> Value {
+        let (msg, order) = parse(segments);
+        service_request(&msg, &order, &Refs::for_study("x"))
+    }
+
+    #[test]
+    fn order_control_drives_status_end_to_end() {
+        for (code, expect) in [
+            ("NW", "active"),
+            ("XO", "active"),
+            ("CA", "revoked"),
+            ("DC", "revoked"),
+            ("OC", "revoked"),
+            ("HD", "on-hold"),
+            ("", "active"),
+        ] {
+            let v = sr(&format!("ORC|{code}|ORD-1\rOBR|1|ORD-1||X^Y\r"));
+            assert_eq!(v["status"], expect, "ORC-1 {code:?}");
+        }
+        let v = sr("OBR|1|ORD-1||X^Y\r");
+        assert_eq!(v["status"], "active", "no ORC at all");
+    }
+
+    #[test]
+    fn obr4_permutations() {
+        let v = sr("ORC|NW\rOBR|1|||CT-HEAD\r");
+        assert_eq!(v["code"]["coding"][0]["code"], "CT-HEAD");
+        assert!(v["code"]["coding"][0].get("display").is_none());
+        assert!(v["code"].get("text").is_none());
+
+        let v = sr("ORC|NW\rOBR|1|||^CT head\r");
+        assert!(v["code"].get("coding").is_none(), "text without a code");
+        assert_eq!(v["code"]["text"], "CT head");
+
+        let v = sr("ORC|NW\rOBR|1|||CT-HEAD^CT head\r");
+        assert_eq!(v["code"]["coding"][0]["code"], "CT-HEAD");
+        assert_eq!(v["code"]["coding"][0]["display"], "CT head");
+        assert!(v["code"]["coding"][0].get("system").is_none());
+        assert_eq!(v["code"]["text"], "CT head");
+
+        let v = sr("ORC|NW\rOBR|1|||CT-HEAD^CT head^L\r");
+        assert!(
+            v["code"]["coding"][0].get("system").is_none(),
+            "`L` is a table name"
+        );
+        let v = sr("ORC|NW\rOBR|1|||CT-HEAD^CT head^LN\r");
+        assert!(
+            v["code"]["coding"][0].get("system").is_none(),
+            "`LN` is not a URI either"
+        );
+
+        let v = sr("ORC|NW\rOBR|1|||24725-4^CT head^http://loinc.org\r");
+        assert_eq!(v["code"]["coding"][0]["system"], "http://loinc.org");
+        let v = sr("ORC|NW\rOBR|1|||24725-4^CT head^urn:oid:2.16.840.1.113883.6.1\r");
+        assert_eq!(
+            v["code"]["coding"][0]["system"],
+            "urn:oid:2.16.840.1.113883.6.1"
+        );
+
+        let v = sr("ORC|NW\rOBR|1|||^^L\r");
+        assert!(v.get("code").is_none(), "a system alone is nothing");
+        let v = sr("ORC|NW\rOBR|1\r");
+        assert!(v.get("code").is_none());
+        let v = sr("ORC|NW\rOBR|1|||\"\"^\"\"\r");
+        assert!(v.get("code").is_none(), "HL7 null values");
+
+        // Escapes are decoded, padding and control characters go.
+        let v = sr("ORC|NW\rOBR|1|||CT\\S\\HEAD^ CT \\T\\ head \r");
+        assert_eq!(v["code"]["coding"][0]["code"], "CT^HEAD");
+        assert_eq!(v["code"]["text"], "CT & head");
+    }
+
+    #[test]
+    fn requester_precedence_and_shapes() {
+        let v =
+            sr("ORC|NW|||||||||||123^Curie^Marie\rOBR|1|||X^Y||||||||||||456^Roentgen^Wilhelm\r");
+        assert_eq!(v["requester"]["display"], "Curie, Marie", "ORC-12 first");
+        let v = sr("ORC|NW\rOBR|1|||X^Y||||||||||||456^Roentgen^Wilhelm\r");
+        assert_eq!(
+            v["requester"]["display"], "Roentgen, Wilhelm",
+            "OBR-16 fallback"
+        );
+        let v = sr("ORC|NW|||||||||||^Curie\rOBR|1|||X^Y\r");
+        assert_eq!(v["requester"]["display"], "Curie", "family only");
+        let v = sr("ORC|NW|||||||||||^^Marie\rOBR|1|||X^Y\r");
+        assert_eq!(v["requester"]["display"], "Marie", "given only");
+        let v = sr("ORC|NW|||||||||||123\rOBR|1|||X^Y\r");
+        assert_eq!(
+            v["requester"]["display"], "123",
+            "bare identifier when there is no name"
+        );
+        let v = sr("ORC|NW|||||||||||^^^^\rOBR|1|||X^Y||||||||||||456^Roentgen\r");
+        assert_eq!(
+            v["requester"]["display"], "Roentgen",
+            "an empty ORC-12 does not block OBR-16"
+        );
+        let v = sr("ORC|NW\rOBR|1|||X^Y\r");
+        assert!(v.get("requester").is_none());
+    }
+
+    #[test]
+    fn authored_on_precision_follows_orc9() {
+        let v = sr("ORC|NW||||||||20260905\rOBR|1|||X^Y\r");
+        assert_eq!(v["authoredOn"], "2026-09-05");
+        let v = sr("ORC|NW||||||||202609\rOBR|1|||X^Y\r");
+        assert_eq!(v["authoredOn"], "2026-09");
+        let v = sr("ORC|NW||||||||20260905113000\rOBR|1|||X^Y\r");
+        assert_eq!(v["authoredOn"], "2026-09-05", "no zone: time dropped");
+        let v = sr("ORC|NW||||||||20260905113000-0400\rOBR|1|||X^Y\r");
+        assert_eq!(v["authoredOn"], "2026-09-05T11:30:00-04:00");
+        let v = sr("ORC|NW||||||||20260931\rOBR|1|||X^Y\r");
+        assert!(v.get("authoredOn").is_none(), "September 31st");
+        let v = sr("ORC|NW||||||||yesterday\rOBR|1|||X^Y\r");
+        assert!(v.get("authoredOn").is_none());
+        let v = sr("ORC|NW\rOBR|1|||X^Y\r");
+        assert!(v.get("authoredOn").is_none());
+    }
+
+    #[test]
+    fn identifier_hygiene() {
+        // A study UID that is not a UID is not carried as urn:dicom:uid.
+        let v = sr("ORC|NW\rOBR|1|||X^Y\rZDS|not-a-uid^^Application^DICOM\r");
+        assert!(
+            v["identifier"]
+                .as_array()
+                .map(|ids| ids.iter().all(|i| i["system"] != "urn:dicom:uid"))
+                .unwrap_or(true),
+            "{v}"
+        );
+        // Placer and filler numbers with a blank EI.1 are not identifiers.
+        let v = sr("ORC|NW|^RIS|^PACS\rOBR|1|||X^Y\r");
+        assert!(v.get("identifier").is_none());
+        // Whitespace-only accession and procedure IDs are omitted.
+        let v = sr("ORC|NW\rOBR|1|||X^Y||||||||||||||   |  \r");
+        assert!(v.get("identifier").is_none());
+        // Assigning authority of an EI: namespace alone is a display, an ISO
+        // OID is a system, a URI is a system, a bad OID is a display only.
+        let v = sr("ORC|NW|A^RIS|B^PACS^1.2.3^ISO|||||||||\rOBR|1|||X^Y\r");
+        let ids = v["identifier"].as_array().unwrap();
+        assert_eq!(ids[0]["assigner"]["display"], "RIS");
+        assert!(ids[0].get("system").is_none());
+        assert_eq!(ids[1]["system"], "urn:oid:1.2.3");
+        assert_eq!(ids[1]["assigner"]["display"], "PACS");
+        let v = sr("ORC|NW|A^^http://ris.example/orders^URI|B^PACS^bad.oid.^ISO\rOBR|1|||X^Y\r");
+        let ids = v["identifier"].as_array().unwrap();
+        assert_eq!(ids[0]["system"], "http://ris.example/orders");
+        assert!(ids[0].get("assigner").is_none());
+        assert!(ids[1].get("system").is_none());
+        assert_eq!(ids[1]["assigner"]["display"], "PACS");
+        // No empty `identifier` array when nothing is there.
+        let v = sr("ORC|NW\rOBR|1|||X^Y\r");
+        assert!(v.get("identifier").is_none());
+    }
+
+    #[test]
+    fn omi_accession_carries_the_ipc_namespace() {
+        let v = sr("ORC|NW\rOBR|1\rIPC|ACC-9^HOSP|RP-9|1.2.3.9|SPS-9|CT\r");
+        let ids = v["identifier"].as_array().unwrap();
+        let acsn = ids
+            .iter()
+            .find(|i| i["type"]["coding"][0]["code"] == "ACSN")
+            .unwrap();
+        assert_eq!(acsn["value"], "ACC-9");
+        assert_eq!(acsn["assigner"]["display"], "HOSP");
+        assert!(ids
+            .iter()
+            .any(|i| i["system"] == "urn:dicom:uid" && i["value"] == "urn:oid:1.2.3.9"));
+        assert!(ids
+            .iter()
+            .any(|i| i.get("type").is_none() && i["value"] == "RP-9"));
     }
 
     #[test]

@@ -94,12 +94,49 @@ fn fnv1a(bytes: &[u8], offset: u64) -> u64 {
 
 /// `urn:oid:` form of a DICOM UID, trailing padding removed.
 pub fn oid_urn(uid: &str) -> String {
-    format!("urn:oid:{}", uid.trim_end_matches('\0').trim())
+    format!("urn:oid:{}", clean_uid(uid))
 }
 
-/// A DICOM UID as a FHIR identifier.
-pub fn uid_identifier(uid: &str) -> Value {
-    json!({ "system": DICOM_UID_SYSTEM, "value": oid_urn(uid) })
+/// A DICOM UID as a FHIR identifier, or `None` when the value is not a
+/// well-formed UID: `urn:oid:` needs an OID, and a garbled UID is not
+/// worth more than its absence.
+pub fn uid_identifier(uid: &str) -> Option<Value> {
+    is_uid(uid).then(|| json!({ "system": DICOM_UID_SYSTEM, "value": oid_urn(uid) }))
+}
+
+/// The UID without the NUL or space padding DICOM allows.
+fn clean_uid(uid: &str) -> &str {
+    uid.trim_end_matches('\0').trim()
+}
+
+/// DICOM PS3.5 9.1: components of decimal digits separated by `.`, no
+/// leading zero in a component except `0` itself, at most 64 characters.
+/// Padding is ignored. A single component (`"1"`) is not a UID.
+pub fn is_uid(uid: &str) -> bool {
+    let uid = clean_uid(uid);
+    if uid.is_empty() || uid.len() > 64 || !uid.contains('.') {
+        return false;
+    }
+    uid.split('.').all(|c| {
+        !c.is_empty()
+            && c.bytes().all(|b| b.is_ascii_digit())
+            && (c.len() == 1 || !c.starts_with('0'))
+    })
+}
+
+/// A FHIR `string` from source text: trimmed, with the control characters
+/// FHIR forbids (everything below U+0020 except tab, LF and CR) removed.
+/// `None` when nothing printable is left, so the element is omitted rather
+/// than emitted empty. DICOM pads to even length and HL7 fields are often
+/// space-padded, so trimming is part of the job. HL7's explicit null,
+/// two double quotes, is absent too.
+pub fn fhir_string(text: &str) -> Option<String> {
+    let cleaned: String = text
+        .chars()
+        .filter(|c| !c.is_control() || matches!(c, '\t' | '\n' | '\r'))
+        .collect();
+    let trimmed = cleaned.trim();
+    (!trimmed.is_empty() && trimmed != "\"\"").then(|| trimmed.to_string())
 }
 
 /// What PID-3.4 (assigning authority, HD) gives us: a `system` only when
@@ -113,36 +150,40 @@ pub struct Authority {
 impl Authority {
     /// From an HD value (`namespace^universal id^universal id type`); the
     /// universal ID is preferred when it is a URI, then the namespace.
+    /// An HD that sits at component level (PID-3.4, EI.2–4 as a unit) has
+    /// its parts separated by `&` instead; when there is no `^`, `&` is
+    /// the separator.
     pub fn from_hd(hd: Option<&str>) -> Authority {
-        let Some(hd) = hd.map(str::trim).filter(|s| !s.is_empty()) else {
+        let Some(hd) = hd.and_then(fhir_string) else {
             return Authority::default();
         };
-        let mut parts = hd.split('^');
-        let namespace = parts.next().unwrap_or("").trim();
-        let universal = parts.next().unwrap_or("").trim();
-        let universal_type = parts.next().unwrap_or("").trim();
-        if is_uri(universal) {
+        let sep = if hd.contains('^') { '^' } else { '&' };
+        let mut parts = hd.split(sep).map(|p| fhir_string(p).unwrap_or_default());
+        let namespace: String = parts.next().unwrap_or_default();
+        let universal: String = parts.next().unwrap_or_default();
+        let universal_type: String = parts.next().unwrap_or_default();
+        if is_uri(&universal) {
             return Authority {
-                system: Some(universal.to_string()),
+                system: Some(universal),
                 assigner: None,
             };
         }
-        if universal_type.eq_ignore_ascii_case("ISO") && !universal.is_empty() && is_oid(universal)
-        {
+        // `is_uid` is the OID grammar: dotted decimal, no leading zeros.
+        if universal_type.eq_ignore_ascii_case("ISO") && is_uid(&universal) {
             return Authority {
                 system: Some(format!("urn:oid:{universal}")),
-                assigner: (!namespace.is_empty()).then(|| namespace.to_string()),
+                assigner: (!namespace.is_empty()).then_some(namespace),
             };
         }
-        if is_uri(namespace) {
+        if is_uri(&namespace) {
             return Authority {
-                system: Some(namespace.to_string()),
+                system: Some(namespace),
                 assigner: None,
             };
         }
         Authority {
             system: None,
-            assigner: (!namespace.is_empty()).then(|| namespace.to_string()),
+            assigner: (!namespace.is_empty()).then_some(namespace),
         }
     }
 }
@@ -185,13 +226,6 @@ pub fn is_uri(s: &str) -> bool {
     scheme_ok && !rest.is_empty() && !s.chars().any(char::is_whitespace)
 }
 
-fn is_oid(s: &str) -> bool {
-    !s.is_empty()
-        && s.split('.')
-            .all(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()))
-        && s.contains('.')
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -200,10 +234,20 @@ mod tests {
     fn uri_check() {
         assert!(is_uri("urn:oid:1.2.3"));
         assert!(is_uri("http://hospital.example/mrn"));
+        assert!(is_uri("urn:uuid:6ba7b810-9dad-11d1-80b4-00c04fd430c8"));
+        assert!(is_uri("urn:ietf:rfc:3986"));
+        assert!(is_uri("x-custom+v1.0:thing"), "RFC 3986 scheme characters");
         assert!(!is_uri("HOSP"));
         assert!(!is_uri("RIS SYSTEM"));
         assert!(!is_uri(":x"));
         assert!(!is_uri("a b:c"));
+        assert!(!is_uri("http:"), "a scheme alone");
+        assert!(!is_uri("1abc:x"), "scheme must start with a letter");
+        assert!(!is_uri("ab_c:x"), "underscore is not a scheme character");
+        assert!(!is_uri("http://a b"));
+        assert!(!is_uri("http://a\tb"));
+        assert!(!is_uri(""));
+        assert!(!is_uri("ü:x"), "non-ASCII scheme");
     }
 
     #[test]
@@ -222,6 +266,28 @@ mod tests {
         let bad_iso = Authority::from_hd(Some("HOSP^notanoid^ISO"));
         assert_eq!(bad_iso.system, None);
         assert_eq!(bad_iso.assigner.as_deref(), Some("HOSP"));
+        // Component-level HD, `&`-separated as in PID-3.4.
+        let sub = Authority::from_hd(Some("HOSP&1.2.276.0.76.3.1.1&ISO"));
+        assert_eq!(sub.system.as_deref(), Some("urn:oid:1.2.276.0.76.3.1.1"));
+        assert_eq!(sub.assigner.as_deref(), Some("HOSP"));
+        let sub_uri = Authority::from_hd(Some("&http://hospital.example/mrn&URI"));
+        assert_eq!(
+            sub_uri.system.as_deref(),
+            Some("http://hospital.example/mrn")
+        );
+        assert_eq!(sub_uri.assigner, None);
+        // Case-insensitive type, padded parts, null value.
+        let iso_lc = Authority::from_hd(Some(" HOSP ^ 1.2.3 ^ iso "));
+        assert_eq!(iso_lc.system.as_deref(), Some("urn:oid:1.2.3"));
+        assert_eq!(Authority::from_hd(Some("\"\"")), Authority::default());
+        // An OID without the ISO type is only a display: no guessing.
+        let untyped = Authority::from_hd(Some("HOSP^1.2.3"));
+        assert_eq!(untyped.system, None);
+        assert_eq!(untyped.assigner.as_deref(), Some("HOSP"));
+        // Namespace that is itself a URI.
+        let ns_uri = Authority::from_hd(Some("urn:oid:1.2.3"));
+        assert_eq!(ns_uri.system.as_deref(), Some("urn:oid:1.2.3"));
+        assert_eq!(ns_uri.assigner, None);
     }
 
     #[test]
@@ -246,8 +312,44 @@ mod tests {
     }
 
     #[test]
+    fn uid_check() {
+        assert!(is_uid("1.2.840.10008.5.1.4.1.1.4"));
+        assert!(is_uid("1.2.3\0"), "NUL padding");
+        assert!(is_uid(" 1.2.3 "), "space padding");
+        assert!(is_uid("2.25.0"));
+        assert!(is_uid("1.0.2"), "a lone zero component is fine");
+        assert!(!is_uid(""));
+        assert!(!is_uid("1"), "one component");
+        assert!(!is_uid("1..2"), "empty component");
+        assert!(!is_uid(".1.2"));
+        assert!(!is_uid("1.2."));
+        assert!(!is_uid("1.02.3"), "leading zero");
+        assert!(!is_uid("1.2.a"));
+        assert!(!is_uid("1.2 .3"), "inner space");
+        assert!(!is_uid("urn:oid:1.2.3"));
+        let long = format!("1.{}", "9".repeat(63));
+        assert_eq!(long.len(), 65);
+        assert!(!is_uid(&long), "65 characters");
+        assert!(is_uid(&long[..64]));
+    }
+
+    #[test]
+    fn fhir_strings_drop_control_characters_and_padding() {
+        assert_eq!(fhir_string("  Head ").as_deref(), Some("Head"));
+        assert_eq!(fhir_string("Head\0\0").as_deref(), Some("Head"));
+        assert_eq!(fhir_string("He\u{7}ad").as_deref(), Some("Head"));
+        assert_eq!(fhir_string("a\tb\nc").as_deref(), Some("a\tb\nc"));
+        assert_eq!(fhir_string(""), None);
+        assert_eq!(fhir_string("   "), None);
+        assert_eq!(fhir_string("\0\u{1}\u{1f}"), None);
+        assert_eq!(fhir_string("Müller").as_deref(), Some("Müller"));
+    }
+
+    #[test]
     fn identifiers() {
-        assert_eq!(uid_identifier("1.2.3\0")["value"], "urn:oid:1.2.3");
+        assert_eq!(uid_identifier("1.2.3\0").unwrap()["value"], "urn:oid:1.2.3");
+        assert_eq!(uid_identifier("not-a-uid"), None);
+        assert_eq!(uid_identifier(""), None);
         let id = typed_identifier(
             "MR",
             "Medical record number",

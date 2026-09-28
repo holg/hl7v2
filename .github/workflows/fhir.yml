@@ -47,6 +47,7 @@ jobs:
           $bin fhir samples/dicom/MR_small.dcm samples/order.hl7          -o out/fhir/bundle-orm.json
           $bin fhir samples/dicom/MR_small.dcm samples/order-omi.hl7      -o out/fhir/bundle-omi.json
           $bin fhir samples/dicom/MR_small.dcm samples/order-mismatch.hl7 -o out/fhir/bundle-mismatch.json
+          $bin fhir samples/dicom/MR_small.dcm samples/order-oru.hl7      -o out/fhir/bundle-oru.json
           ls -la out/fhir
 
       - name: Cache the validator
@@ -63,7 +64,7 @@ jobs:
       - name: Validate
         run: |
           run_validator() {
-            java -jar validator_cli.jar out/fhir/bundle-orm.json out/fhir/bundle-omi.json out/fhir/bundle-mismatch.json \
+            java -jar validator_cli.jar out/fhir/bundle-orm.json out/fhir/bundle-omi.json out/fhir/bundle-mismatch.json out/fhir/bundle-oru.json \
               -version "$FHIR_VERSION" -ig "$MII_PACKAGE" \
               -output out/fhir/validation.json "$@" > out/fhir/validation.txt 2>&1
           }
@@ -97,7 +98,7 @@ jobs:
             def counts: [.. | objects | select(has("severity")) | .severity]
               | group_by(.) | map("\(length) \(.[0])") | join(", ")
               | if . == "" then "no issues" else . end;
-            (["bundle-orm.json", "bundle-omi.json", "bundle-mismatch.json"]) as $names
+            (["bundle-orm.json", "bundle-omi.json", "bundle-mismatch.json", "bundle-oru.json"]) as $names
             | [ .entry | to_entries[] | "\($names[.key]): \(.value.resource | counts)" ]
               + ["all: \(counts)"]
             | .[]' out/fhir/validation.json | sed 's/^/    /')
@@ -119,6 +120,7 @@ jobs:
             <li><a href="bundle-orm.json">bundle-orm.json</a>: ORM^O01 with ZDS, linked by study UID</li>
             <li><a href="bundle-omi.json">bundle-omi.json</a>: OMI^O23 with IPC, linked by study UID from IPC-3</li>
             <li><a href="bundle-mismatch.json">bundle-mismatch.json</a>: linked study, patient identifiers disagree</li>
+            <li><a href="bundle-oru.json">bundle-oru.json</a>: ORU^R01 result, study UID from the DCM 110180 OBX</li>
             <li><a href="validation.txt">validation.txt</a>: validator output; <a href="validation.json">validation.json</a>: OperationOutcome</li>
           </ul>
           <h2>Result</h2>
