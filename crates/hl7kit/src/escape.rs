@@ -56,7 +56,12 @@ fn decode_sequence(seq: &str, enc: Encoding) -> Option<String> {
         ".br" => Some("\n".to_string()),
         _ => {
             let hex = seq.strip_prefix('X')?;
-            if hex.is_empty() || hex.len() % 2 != 0 {
+            // Hex digits only, checked on the bytes before any slicing. A
+            // sequence with an even byte length can still hold a multi-byte
+            // character (`\XAéB\`), and the two-byte slices below would then
+            // cut inside it and panic. The check also stops `from_str_radix`
+            // from accepting a sign (`\X+F\`).
+            if hex.is_empty() || hex.len() % 2 != 0 || !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
                 return None;
             }
             let bytes = (0..hex.len())
@@ -98,6 +103,18 @@ mod tests {
             r"\H\bold\N\ and \oops"
         );
         assert_eq!(unescape(r"\XZZ\", e), r"\XZZ\");
+    }
+
+    #[test]
+    fn non_hex_in_hex_sequence_is_kept_not_a_panic() {
+        let e = Encoding::STANDARD;
+        // Even byte length, but a slice at offset 2 would cut inside 'é'.
+        // Found by mutation testing; it panicked before the byte check.
+        assert_eq!(unescape(r"\XAéB\", e), r"\XAéB\");
+        // A sign is not a hex digit.
+        assert_eq!(unescape(r"\X+F\", e), r"\X+F\");
+        // Valid hex still decodes.
+        assert_eq!(unescape(r"\XC3A9\", e), "é");
     }
 
     #[test]
