@@ -51,7 +51,8 @@ pub enum UidPolicy {
     /// This mirrors dcm4che's HL7-to-MWL behaviour, which derives a
     /// name-based UID from those identifiers. The same order always yields
     /// the same UID. It is dcm4che-style, not dcm4che-identical: dcm4che
-    /// uses UUID version 5, this crate a version 8 hash.
+    /// uses UUID version 3 (MD5, Java's `UUID.nameUUIDFromBytes`), this
+    /// crate a version 8 hash.
     Dcm4cheStyle,
     /// Use the 128 bits the caller supplies (from a real random source) as
     /// a `2.25.` UUID-derived UID. The crate has no random source of its

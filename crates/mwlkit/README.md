@@ -102,8 +102,9 @@ The only value this crate ever invents. When IPC-3, ZDS-1 and the DCM
   Requested Procedure ID, else from the Accession Number, else an error.
   This mirrors dcm4che, which derives a name-based UID from those
   identifiers so the same order always yields the same UID. It is
-  dcm4che-style, not dcm4che-identical: dcm4che uses UUID version 5, this
-  crate a version 8 hash, both under the `2.25.` UUID-derived root of
+  dcm4che-style, not dcm4che-identical: dcm4che uses UUID version 3 (MD5,
+  Java's `UUID.nameUUIDFromBytes`), this crate a version 8 hash, both under
+  the `2.25.` UUID-derived root of
   PS3.5 B.2, which needs no registered root and fits the UI limit.
 * `Random(u128)`: the caller's random bits as a `2.25.` UID. The crate has
   no random source and does not pretend to.
