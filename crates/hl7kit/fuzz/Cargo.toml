@@ -1,0 +1,25 @@
+[package]
+name = "hl7kit-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+
+[dependencies.hl7kit]
+path = ".."
+
+[[bin]]
+name = "parse"
+path = "fuzz_targets/parse.rs"
+test = false
+doc = false
+bench = false
+
+# Its own workspace, so the repository workspace does not try to build it.
+[workspace]
+members = ["."]
