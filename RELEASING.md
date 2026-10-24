@@ -8,14 +8,17 @@ stored anywhere.
 |---|---|---|---|
 | `hl7kit` Rust crate | `hl7kit-vX.Y.Z` | `publish.yml` | crates.io |
 | `mwlkit` Rust crate | `mwlkit-vX.Y.Z` | `publish.yml` | crates.io |
+| `fhirkit` Rust crate | `fhirkit-vX.Y.Z` | `publish.yml` | crates.io |
 | `hl7kit` Python wheels | `hl7kit-py-vX.Y.Z` | `python.yml` | PyPI + GitHub release |
 | `mwlkit` Python wheels | `mwlkit-py-vX.Y.Z` | `python.yml` | PyPI + GitHub release |
+| `fhirkit-rs` Python wheels | `fhirkit-py-vX.Y.Z` | `python.yml` | PyPI + GitHub release |
 
 The browser demo deploys from every push to `main` (`pages.yml`).
 
 ## Python wheels
 
-The binding crates live in `crates/hl7kit-py` and `crates/mwlkit-py`. Each
+The binding crates live in `crates/hl7kit-py`, `crates/mwlkit-py` and
+`crates/fhirkit-py`. Each
 has two version fields that must agree: `version` in `Cargo.toml` and
 `version` in `pyproject.toml`. The workflow refuses to run when they differ,
 and refuses a tag whose version differs from the crate's.
@@ -34,10 +37,12 @@ and refuses a tag whose version differs from the crate's.
    git tag hl7kit-py-v0.2.0 && git push origin hl7kit-py-v0.2.0
    # or
    git tag mwlkit-py-v0.1.0 && git push origin mwlkit-py-v0.1.0
+   # or
+   git tag fhirkit-py-v0.1.0 && git push origin fhirkit-py-v0.1.0
    ```
 
-   The tag selects the package. The workflow builds both (mwlkit's tests use
-   the hl7kit wheel from the same run), publishes only the tagged one to PyPI
+   The tag selects the package. The workflow builds all of them (mwlkit's
+   tests use the hl7kit wheel from the same run), publishes only the tagged one to PyPI
    with attestations, and creates a GitHub release named after the tag that
    carries the same wheels and sdist.
 
@@ -51,8 +56,10 @@ emulation and not smoke-tested.
 ## One-time setup (done once per package, by the repository owner)
 
 Trusted Publishing needs a "pending publisher" on PyPI for each package,
-and the GitHub environment the workflow names. Both packages are published
-since 2026-09-16; the entries exist.
+and the GitHub environment the workflow names. hl7kit and mwlkit are
+published since 2026-09-16; their entries exist. fhirkit-rs needs its
+pending publisher before the first `fhirkit-py-v*` tag. A pending publisher
+does not reserve the name, so publish soon after adding it.
 
 PyPI (https://pypi.org/manage/account/publishing/), one entry per package:
 
@@ -60,12 +67,20 @@ PyPI (https://pypi.org/manage/account/publishing/), one entry per package:
 |---|---|---|---|---|
 | `hl7kit` | `holg` | `hl7v2` | `python.yml` | `pypi` |
 | `mwlkit` | `holg` | `hl7v2` | `python.yml` | `pypi` |
+| `fhirkit-rs` | `holg` | `hl7v2` | `python.yml` | `pypi` |
+
+The fhirkit wheels are `fhirkit-rs` on PyPI because `fhirkit` there is an
+unrelated project. The import name is `fhirkit`, and the Rust crate is
+`fhirkit` on crates.io.
 
 GitHub: Settings > Environments, `pypi` (created on first use). Recommended:
-restrict its deployment branches and tags to `hl7kit-py-v*` and
-`mwlkit-py-v*` and add yourself as a required reviewer.
+restrict its deployment branches and tags to `hl7kit-py-v*`,
+`mwlkit-py-v*` and `fhirkit-py-v*`, and add yourself as a required reviewer.
 
 ## Rust crates
 
-See the "Releasing" section of the root README: tag `hl7kit-vX.Y.Z` or
-`mwlkit-vX.Y.Z` with the version in the crate's `Cargo.toml`.
+See the "Releasing" section of the root README: tag `hl7kit-vX.Y.Z`,
+`mwlkit-vX.Y.Z` or `fhirkit-vX.Y.Z` with the version in the crate's `Cargo.toml`.
+The first publish of a crate uses the `CARGO_REGISTRY_TOKEN` secret; once the
+crate exists, add `holg/hl7v2` / `publish.yml` under its Trusted Publishing
+settings on crates.io so later tags need no token.

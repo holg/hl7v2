@@ -1,0 +1,40 @@
+[build-system]
+requires = ["maturin>=1.7,<2.0"]
+build-backend = "maturin"
+
+[project]
+# "fhirkit" on PyPI belongs to an unrelated project; the import name is
+# still `fhirkit`.
+name = "fhirkit-rs"
+version = "0.1.0"
+description = "FHIR R4 in Rust for Python: every resource and datatype from the official specification, lossless JSON, and validation that reports every problem with its path."
+readme = "README.md"
+license = { text = "MIT OR Apache-2.0" }
+requires-python = ">=3.9"
+authors = [{ name = "Holger Trahe" }]
+keywords = ["fhir", "hl7", "fhir-r4", "healthcare", "validation", "interoperability"]
+classifiers = [
+  "Programming Language :: Rust",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: Implementation :: CPython",
+  "Topic :: Scientific/Engineering :: Medical Science Apps.",
+  "Operating System :: OS Independent",
+  "Typing :: Typed",
+]
+dependencies = []               # zero runtime deps: installs behind any hospital mirror
+
+[project.optional-dependencies]
+test = ["pytest>=7"]
+
+[project.scripts]
+fhirkit = "fhirkit.cli:main"    # `fhirkit validate patient.json`
+
+[project.urls]
+Repository = "https://github.com/holg/hl7v2"
+Documentation = "https://docs.rs/fhirkit"
+
+[tool.maturin]
+python-source = "python"        # python/fhirkit/__init__.py wraps the extension
+module-name = "fhirkit._native" # extension lands inside the package
+features = ["pyo3/extension-module"]
+strip = true

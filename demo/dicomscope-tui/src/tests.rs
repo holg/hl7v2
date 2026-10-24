@@ -1,9 +1,9 @@
 //! Crate-level tests: the documentation matches the program, and the
 //! commands and the GPU plugin work end to end on a synthetic study.
 
-use crate::cli::{Backend, Cli};
+use crate::cli::Cli;
 use crate::commands::{self, filter_tags, is_linked, open_study};
-use crate::gpu::{ImagePlugin, Look, WgpuPlugin};
+use crate::gpu::{Look, SliceView};
 use clap::CommandFactory;
 use dicomscope_core::dicom::testutil::Synthetic;
 use std::path::PathBuf;
@@ -84,20 +84,28 @@ fn a_missing_series_is_an_error_not_a_panic() {
 /// Real GPU work: skipped where no adapter exists (headless CI without
 /// a software rasteriser), run everywhere else.
 #[test]
-fn the_wgpu_plugin_renders_the_slice_offscreen() {
-    let mut plugin = match WgpuPlugin::new(Backend::Auto) {
-        Ok(p) => p,
+fn the_slice_view_renders_offscreen() {
+    let gpu = match scopekit::gpu::headless(scopekit::Backend::Auto) {
+        Ok(g) => g,
         Err(e) => {
             eprintln!("skipped, no GPU adapter: {e}");
             return;
         }
     };
+    let describe = gpu.describe();
+    let mut offscreen = scopekit::gpu::Offscreen::new(gpu);
+    let mut view = SliceView::default();
     let mut s = open_study(&[synthetic_study("gpu")]).unwrap();
     let size = (30, 20);
     s.set_canvas(size);
     let img = s.image().unwrap();
     s.view = s.view.fit(size, img);
-    let picture = plugin.render(&mut s, size, Look::default()).unwrap();
+    let mut render = |view: &mut SliceView| {
+        let px = offscreen.render(view, size.0, size.1).unwrap();
+        image::RgbaImage::from_raw(size.0, size.1, px).unwrap()
+    };
+    view.update(&mut s, Look::default());
+    let picture = render(&mut view);
     assert_eq!(picture.dimensions(), size);
     // The 3x2 synthetic image is fitted into 30x20 with bars left and
     // right; the centre is image, the corners black.
@@ -105,9 +113,10 @@ fn the_wgpu_plugin_renders_the_slice_offscreen() {
     assert!(!lit(0, 0), "corner is outside the image");
     let inside = (1..19).any(|y| (1..29).any(|x| lit(x, y)));
     assert!(inside, "no pixel of the image was drawn");
-    let inverted = plugin.render(&mut s, size, Look { invert: true }).unwrap();
+    view.update(&mut s, Look { invert: true });
+    let inverted = render(&mut view);
     assert_ne!(picture, inverted, "inversion changes the picture");
-    assert!(plugin.describe().contains(" · "));
+    assert!(describe.contains(" · "));
 }
 
 /// The viewer end to end on a test terminal: open a study and an order,
@@ -116,10 +125,9 @@ fn the_wgpu_plugin_renders_the_slice_offscreen() {
 #[test]
 fn the_viewer_draws_every_panel_and_follows_keys() {
     use crate::app::{App, Tab};
-    use crate::cli::{GpuArgs, ViewArgs};
+    use crate::cli::ViewArgs;
     use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
     use ratatui::backend::TestBackend;
-    use ratatui_image::picker::Picker;
 
     let args = ViewArgs {
         paths: vec![
@@ -130,10 +138,13 @@ fn the_viewer_draws_every_panel_and_follows_keys() {
         slice: 1,
         ..Default::default()
     };
-    let gpu = GpuArgs {
-        backend: Backend::Auto,
+    let (mut app, view) = App::new(&args);
+    let config = scopekit::Config {
+        protocol: scopekit::Protocol::Halfblocks,
+        ..scopekit::Config::default()
     };
-    let mut app = App::new(&args, gpu, crate::app::Mode::Terminal(Picker::halfblocks()));
+    let picker = scopekit::terminal::picker(scopekit::Protocol::Halfblocks);
+    let mut driver = scopekit::terminal::Driver::new(picker, view, &config);
     let mut term = ratatui::Terminal::new(TestBackend::new(120, 36)).unwrap();
     let key = |c: KeyCode| Event::Key(KeyEvent::new(c, KeyModifiers::NONE));
     let screen = |t: &ratatui::Terminal<TestBackend>| {
@@ -148,17 +159,13 @@ fn the_viewer_draws_every_panel_and_follows_keys() {
             .join("\n")
     };
 
-    app.frame(&mut term).unwrap();
+    driver.draw(&mut term, &mut app).unwrap();
     let s = screen(&term);
     assert!(s.contains("F1 Image") && s.contains("F7 Documents"), "{s}");
     assert!(s.contains("series 1/1"), "{s}");
     assert!(s.contains("ORM^O01"), "order summary in the sidebar:\n{s}");
-    if app.plugin.is_ok() {
-        assert!(
-            app.graphic.is_some(),
-            "the slice was rendered: {:?}",
-            app.render_error
-        );
+    if !app.describe.starts_with("no GPU") {
+        assert!(driver.error().is_none(), "{:?}", driver.error());
         assert!(
             s.contains('▀') || s.contains('▄'),
             "half blocks drawn:\n{s}"
@@ -168,7 +175,7 @@ fn the_viewer_draws_every_panel_and_follows_keys() {
     let before = app.session.view.scale;
     for c in ['-', 'r', 'w', 'i', 'e'] {
         app.handle(key(KeyCode::Char(c)));
-        app.frame(&mut term).unwrap();
+        driver.draw(&mut term, &mut app).unwrap();
     }
     // Zoom out: the 3x2 test image already sits at the maximum scale.
     assert!(app.session.view.scale < before);
@@ -178,16 +185,16 @@ fn the_viewer_draws_every_panel_and_follows_keys() {
     for tab in Tab::ALL.iter().skip(1) {
         app.handle(key(KeyCode::Tab));
         assert_eq!(app.tab, *tab);
-        app.frame(&mut term).unwrap();
+        driver.draw(&mut term, &mut app).unwrap();
         let s = screen(&term);
         assert!(s.contains(tab.title()), "{:?} panel:\n{s}", tab);
     }
     // FHIR: the Bundle, then the next resource.
     app.handle(key(KeyCode::F(6)));
-    app.frame(&mut term).unwrap();
+    driver.draw(&mut term, &mut app).unwrap();
     assert!(screen(&term).contains("\"resourceType\""));
     app.handle(key(KeyCode::Right));
-    app.frame(&mut term).unwrap();
+    driver.draw(&mut term, &mut app).unwrap();
     assert!(screen(&term).contains("◀ Patient ▶"));
 
     // Tags: filter by typing.
@@ -201,12 +208,12 @@ fn the_viewer_draws_every_panel_and_follows_keys() {
         }
     }
     app.handle(key(KeyCode::Enter));
-    app.frame(&mut term).unwrap();
+    driver.draw(&mut term, &mut app).unwrap();
     let s = screen(&term);
     assert!(s.contains("/rows") && s.contains("Rows"), "{s}");
 
     app.handle(key(KeyCode::Char('?')));
-    app.frame(&mut term).unwrap();
+    driver.draw(&mut term, &mut app).unwrap();
     assert!(screen(&term).contains("Keys"));
     app.handle(key(KeyCode::Char('x')));
     assert!(!app.help);

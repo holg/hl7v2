@@ -1,0 +1,12 @@
+[package]
+name = "fhirkit-gen"
+version = "0.1.0"
+description = "Generates fhirkit's typed FHIR R4 code from the official specification package (hl7.fhir.r4.core)"
+publish = false
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+serde_json = "1"

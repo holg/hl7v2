@@ -37,7 +37,7 @@ apps show.
 - [Global options](#global-options)
 - [Exit status](#exit-status)
 - [Environment](#environment)
-- [As a library: image plugins](#as-a-library-image-plugins)
+- [Built on scopekit](#built-on-scopekit)
 
 ## Quick start
 
@@ -80,7 +80,7 @@ status bar shows the time.
 | foot, mlterm, xterm (`-ti vt340`), Windows Terminal ≥ 1.22 | sixel |
 | everything else, including Terminal.app and tmux without passthrough | half blocks |
 
-Press `p` in the viewer to try the next protocol. `--protocol` forces one.
+`--protocol` forces one, for example `--protocol halfblocks` in tmux.
 
 ## Window mode
 
@@ -103,10 +103,9 @@ SSH clients) the terminal can only show the half-block approximation.
 
 Both halves share one device and one frame, and nothing is read back. The
 image panel is drawn straight onto the window's surface at native
-resolution, Retina included. The keys are the same except `p`, which has
-no protocols to switch; `Cmd-Q` and `Cmd-W` also close the window. The
-text uses the bundled Cascadia Mono (SIL Open Font License); `--font FILE`
-takes any other TrueType or OpenType font, for example
+resolution, Retina included. The keys are the same; `Cmd-Q` and `Cmd-W` also
+close the window. The text uses the bundled Cascadia Mono (SIL Open Font
+License); `--font FILE` takes any other TrueType or OpenType font, for example
 `/System/Library/Fonts/Menlo.ttc`.
 
 Window mode runs wherever winit and wgpu do: macOS (Metal), Windows (DX12,
@@ -159,7 +158,6 @@ session; over SSH, use the terminal mode.
 | `Space` | cine play / pause (multi-frame and series) |
 | `/` | Tags: filter; `Enter` keeps it, `Esc` clears it |
 | `Enter` `Esc` | Documents: open / back |
-| `p` | next graphics protocol (kitty, iTerm2, sixel, half blocks) |
 | `?` `Esc` | this help; either closes it (so does any key or a click) |
 | `q`, `Ctrl-C` | quit |
 
@@ -392,47 +390,36 @@ then the adapter `--backend` would pick.
 | `WGPU_BACKEND` | with `--backend auto`, restricts wgpu to these backends (`metal`, `vulkan`, `dx12`, `gl`, comma-separated) |
 | `TERM`, `TERM_PROGRAM`, `TMUX` | used by the protocol detection |
 
-## As a library: image plugins
+## Built on scopekit
 
-The viewer never renders anything itself. It asks an
-[`ImagePlugin`](gpu::ImagePlugin) for an RGBA image of a given pixel size
-and hands it to the terminal. [`WgpuPlugin`](gpu::WgpuPlugin) is the
-implementation that ships. It wraps `dicomscope_core::render::Renderer`,
-which draws into an offscreen texture and reads it back. The same
-renderer draws into a window surface in the desktop app and a canvas in
-the browser.
+The terminal and window machinery is not in this crate. It is
+[scopekit](https://github.com/holg/scopekit), which any ratatui app with a wgpu view
+can use; its [HOWTO](https://github.com/holg/scopekit/blob/main/crates/scopekit/HOWTO.md) walks through
+building one. This crate adds only what is DICOM-specific:
 
-A different renderer (a CPU fallback, a remote render server, a
-recording plugin for tests) implements the trait:
+- `app.rs` implements `scopekit::App`: it draws the panels, places the
+  slice's view in the image panel, and handles keys and mouse.
+- `gpu.rs` holds `SliceView`, a `scopekit::GpuView` wrapping
+  `dicomscope_core::render::Renderer` (the same WGSL shader the browser
+  and the desktop app use), created on whatever device scopekit provides.
+- `render` uses the same view through `scopekit::gpu::Offscreen`, so a PNG
+  export is pixel for pixel what the viewer shows.
 
 ```rust
+use dicomscope_tui::gpu::{Look, SliceView};
 use dicomscope_core::session::Session;
-use dicomscope_core::AppError;
-use dicomscope_tui::gpu::{ImagePlugin, Look};
 
-/// Grey test card: every pixel mid-grey.
-struct TestCard;
-
-impl ImagePlugin for TestCard {
-    fn describe(&self) -> String {
-        "test card".into()
-    }
-    fn render(
-        &mut self,
-        _session: &mut Session,
-        (w, h): (u32, u32),
-        _look: Look,
-    ) -> Result<image::RgbaImage, AppError> {
-        Ok(image::RgbaImage::from_pixel(w, h, image::Rgba([128, 128, 128, 255])))
-    }
+// A view with nothing loaded renders black, without panicking.
+let mut view = SliceView::default();
+view.update(&mut Session::new(), Look::default());
+match scopekit::render_to_rgba(&mut view, 4, 3, scopekit::Backend::Auto) {
+    Ok(px) => assert!(px.chunks(4).all(|p| p == [0, 0, 0, 255])),
+    Err(e) => eprintln!("no GPU here: {e}"),
 }
-
-let mut plugin = TestCard;
-let picture = plugin.render(&mut Session::new(), (4, 3), Look::default()).unwrap();
-assert_eq!(picture.dimensions(), (4, 3));
 ```
 
-## Not a medical device
+
+$1
 
 This is a demonstration viewer. It is not validated for diagnosis and must
 not be used for it.

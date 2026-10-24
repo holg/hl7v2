@@ -4,7 +4,7 @@
 
 use clap::Parser;
 use dicomscope_tui::cli::{Cli, Command, GpuArgs, ViewArgs};
-use dicomscope_tui::{app, commands, window};
+use dicomscope_tui::{app, commands};
 use std::process::ExitCode;
 
 fn main() -> ExitCode {
@@ -32,9 +32,5 @@ fn main() -> ExitCode {
 }
 
 fn viewer(args: &ViewArgs, gpu: GpuArgs) -> commands::Outcome {
-    if args.window {
-        window::run(args, gpu, args.font.as_ref()).map(|()| 0)
-    } else {
-        app::run(args, gpu).map(|()| 0).map_err(|e| e.to_string())
-    }
+    app::run(args, gpu).map(|()| 0)
 }

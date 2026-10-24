@@ -1,0 +1,29 @@
+[package]
+name = "fhirkit"
+version = "0.1.0"
+description = "FHIR R4 for Rust: typed models for every resource and datatype generated from the official specification, lossless JSON with path-precise validation, typed search queries, FHIRPath"
+keywords = ["fhir", "hl7", "healthcare", "fhirpath", "interoperability"]
+categories = ["parser-implementations", "science", "encoding"]
+readme = "README.md"
+documentation = "https://docs.rs/fhirkit"
+homepage = "https://github.com/holg/hl7v2"
+include = ["src/**", "tests/**", "examples/**", "README.md", "ROADMAP.md", "BENCH.md", "Cargo.toml"]
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+# Resource groups, as the specification files them. Datatypes are always
+# in; a browser build can take only the groups it uses.
+[features]
+default = ["all"]
+all = ["foundation", "base", "clinical", "financial", "specialized"]
+foundation = []
+base = []
+clinical = []
+financial = []
+specialized = []
+
+[dependencies]
+
+[dev-dependencies]

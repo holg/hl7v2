@@ -1,9 +1,8 @@
 //! Drawing the viewer: a sidebar with the series and the order, tabs on the
 //! right, a status bar at the bottom. Pure functions of the [`App`].
 
-use crate::app::{App, Mode, Tab, FHIR_RESOURCES};
+use crate::app::{App, Tab, FHIR_RESOURCES};
 use crate::commands::{filter_tags, is_linked, link_text};
-use crate::term;
 use dicomscope_core::session::DocumentContent;
 use hl7kit::order::OrderField;
 use ratatui::layout::{Alignment, Constraint, Layout, Rect};
@@ -11,7 +10,6 @@ use ratatui::style::{Color, Modifier, Style, Stylize};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Tabs, Wrap};
 use ratatui::Frame;
-use ratatui_image::Image;
 
 /// Where everything goes, computed once per frame so the image can be
 /// rendered for its area before drawing starts, and kept for mouse hits.
@@ -219,13 +217,11 @@ fn draw_image(f: &mut Frame, app: &App, a: &Areas) {
         _ => "Image".into(),
     };
     f.render_widget(block(&title), a.body);
-    let terminal_mode = matches!(app.mode, Mode::Terminal(_));
-    let message = if let (true, Err(e)) = (terminal_mode, &app.plugin) {
+    let message = if app.describe.starts_with("no GPU") {
         Some(format!(
-            "No GPU adapter for the image: {e}\n\nTry --backend gl, or `dicomscope-tui gpu`."
+            "{}\n\nTry --backend gl, or `dicomscope-tui gpu`.",
+            app.describe
         ))
-    } else if let Some(e) = &app.render_error {
-        Some(format!("Rendering failed: {e}"))
     } else if s.set.is_none() {
         Some("Open a study: dicomscope-tui STUDY [ORDER]\n\nPress ? for keys.".into())
     } else if s.frame.is_none() {
@@ -244,13 +240,8 @@ fn draw_image(f: &mut Frame, app: &App, a: &Areas) {
                 .wrap(Wrap { trim: true }),
             centered(a.image, 90, 5),
         );
-        return;
     }
-    // Terminal graphics sit above the text layer: the help box would be
-    // hidden under the image, so the image waits until help closes.
-    if let (Some((area, g)), false) = (&app.graphic, app.help) {
-        f.render_widget(Image::new(g), *area);
-    }
+    // The slice itself is scopekit's: placed in `a.image` by the app.
 }
 
 fn draw_tags(f: &mut Frame, app: &App, area: Rect) {
@@ -604,22 +595,12 @@ fn draw_status(f: &mut Frame, app: &App, area: Rect) {
         } else {
             parts.push(Span::raw(" "));
         }
-        match (&app.mode, &app.plugin) {
-            (Mode::Window(shared), _) => parts.push(Span::styled(
-                format!("{} → window", shared.borrow().adapter),
-                Style::new().fg(ACCENT),
-            )),
-            (Mode::Terminal(picker), Ok(p)) => parts.push(Span::styled(
-                format!(
-                    "{} → {} {:.0} ms",
-                    p.describe(),
-                    term::protocol_name(picker),
-                    app.render_ms
-                ),
-                Style::new().fg(ACCENT),
-            )),
-            (Mode::Terminal(_), Err(_)) => parts.push(Span::styled("no GPU", Style::new().red())),
-        }
+        let style = if app.describe.starts_with("no GPU") {
+            Style::new().red()
+        } else {
+            Style::new().fg(ACCENT)
+        };
+        parts.push(Span::styled(app.describe.clone(), style));
     }
     parts.push(sep());
     parts.push(Span::styled("? keys  q quit", Style::new().dark_gray()));
@@ -660,10 +641,6 @@ pub const KEYS: &[(&str, &str)] = &[
     ("Space", "cine play / pause (multi-frame and series)"),
     ("/", "Tags: filter; Enter keeps it, Esc clears it"),
     ("Enter  Esc", "Documents: open / back"),
-    (
-        "p",
-        "next graphics protocol (kitty, iTerm2, sixel, half blocks)",
-    ),
     (
         "?  Esc",
         "this help; either closes it (so does any key or a click)",

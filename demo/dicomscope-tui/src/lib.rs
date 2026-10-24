@@ -7,9 +7,7 @@ pub mod app;
 pub mod cli;
 pub mod commands;
 pub mod gpu;
-pub mod term;
 pub mod ui;
-pub mod window;
 
 #[cfg(test)]
 mod tests;

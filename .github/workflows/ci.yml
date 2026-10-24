@@ -26,7 +26,22 @@ jobs:
         run: cargo clippy --workspace --all-targets -- -D warnings
 
       - name: Clippy (wasm32)
-        run: cargo clippy -p dicomscope --target wasm32-unknown-unknown -- -D warnings
+        run: |
+          cargo clippy -p dicomscope --target wasm32-unknown-unknown -- -D warnings
+          cargo clippy -p fhirkit --target wasm32-unknown-unknown -- -D warnings
+
+      # Fixed FHIR packages are cached; the SQL-on-FHIR suite is fetched
+      # fresh on every run by the script.
+      - name: Cache FHIR packages
+        uses: actions/cache@v4
+        with:
+          path: |
+            tmp/fhir/core
+            tmp/fhir/examples
+          key: fhir-packages-r4-4.0.1
+
+      - name: Fetch FHIR fixtures
+        run: crates/fhirkit/fetch-fixtures.sh
 
       - name: Test (host)
         run: cargo test --workspace
@@ -34,7 +49,7 @@ jobs:
       - name: No network APIs in the demo
         run: |
           set -e
-          if grep -rnE 'fetch\(|XMLHttpRequest|WebSocket|EventSource' demo/dicomscope/src demo/dicomscope-core/src demo/dicomscope-desktop/src crates/hl7kit/src crates/mwlkit/src; then
+          if grep -rnE '(^|[^A-Za-z0-9_])(fetch\(|XMLHttpRequest|WebSocket|EventSource)' demo/dicomscope/src demo/dicomscope-core/src demo/dicomscope-desktop/src crates/hl7kit/src crates/mwlkit/src crates/fhirkit/src; then
             echo "network API reference found"; exit 1
           fi
           if grep -nE '"(Request|Response|Fetch|WebSocket|XmlHttpRequest|Headers)"' demo/dicomscope/Cargo.toml; then

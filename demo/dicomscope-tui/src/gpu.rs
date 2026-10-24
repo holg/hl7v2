@@ -1,80 +1,74 @@
-//! Image plugins: whatever turns the session's current slice into pixels.
-//!
-//! The terminal only ever receives finished RGBA images; how they are made
-//! is behind [`ImagePlugin`]. The plugin that ships is [`WgpuPlugin`]: the
-//! same WGSL shader and renderer the browser and desktop apps use, running
-//! headless on a real GPU backend (Metal on a Mac, Vulkan, DX12 or GL
-//! elsewhere) and read back from an offscreen texture. Windowing, zoom,
-//! rotation, flips, interpolation and contrast enhancement all happen on
-//! the GPU, exactly as in the other apps.
+//! The DICOM slice as a scopekit [`GpuView`]: the same WGSL shader and
+//! renderer the browser and desktop apps use, on whatever device scopekit
+//! gives it. In a terminal that is an offscreen texture sent as an image;
+//! in a window it is the window's own surface. Windowing, zoom, rotation,
+//! flips, interpolation and contrast enhancement all happen on the GPU.
 
-use crate::cli::Backend;
+use dicomscope_core::dicom::Frame;
 use dicomscope_core::render::{Renderer, Uniforms};
 use dicomscope_core::session::Session;
-use dicomscope_core::AppError;
-use image::RgbaImage;
+use scopekit::{wgpu, Gpu, GpuView, Target};
 
-/// Display choices that belong to the terminal app rather than the session.
+/// Display choices that belong to the viewer rather than the session.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Look {
     /// Invert greyscale on top of what the file asks for.
     pub invert: bool,
 }
 
-/// Something that renders the session's slice at a given pixel size.
-pub trait ImagePlugin {
-    /// A one-line description for the status bar: backend and device.
-    fn describe(&self) -> String;
-
-    /// Render the slice on screen into a `size.0` x `size.1` RGBA image.
-    /// Takes the session's pending frame, if any, so a newly decoded slice
-    /// is uploaded once. The session's canvas must already be `size`.
-    fn render(
-        &mut self,
-        session: &mut Session,
-        size: (u32, u32),
-        look: Look,
-    ) -> Result<RgbaImage, AppError>;
+/// The slice on screen, as a GPU view.
+#[derive(Default)]
+pub struct SliceView {
+    renderer: Option<Renderer>,
+    pending: Option<Frame>,
+    uniforms: Option<Uniforms>,
+    changed: bool,
 }
 
-/// The wgpu plugin: a headless [`Renderer`] on the chosen backend.
-pub struct WgpuPlugin {
-    renderer: Renderer,
-}
-
-impl WgpuPlugin {
-    /// Open an adapter on `backend`. `auto` honours `WGPU_BACKEND` from
-    /// the environment, as the desktop app does.
-    pub fn new(backend: Backend) -> Result<WgpuPlugin, AppError> {
-        let instance = instance(backend);
-        let renderer = pollster::block_on(Renderer::headless(&instance, 1, 1))?;
-        Ok(WgpuPlugin { renderer })
-    }
-}
-
-impl ImagePlugin for WgpuPlugin {
-    fn describe(&self) -> String {
-        let info = self.renderer.adapter_info();
-        format!("{:?} · {}", info.backend, info.name)
-    }
-
-    fn render(
-        &mut self,
-        session: &mut Session,
-        size: (u32, u32),
-        look: Look,
-    ) -> Result<RgbaImage, AppError> {
-        let (w, h) = (size.0.max(1), size.1.max(1));
-        self.renderer.resize(w, h);
+impl SliceView {
+    /// Take the session's newly decoded frame, if any, and its current
+    /// window, view and look. The next render shows them.
+    pub fn update(&mut self, session: &mut Session, look: Look) {
         if let Some(frame) = session.take_pending_frame() {
-            self.renderer.upload(&frame);
+            self.pending = Some(frame);
         }
-        if let Some(u) = uniforms(session, look) {
-            self.renderer.set_uniforms(u);
+        self.uniforms = uniforms(session, look);
+        self.changed = true;
+    }
+}
+
+impl GpuView for SliceView {
+    fn prepare(&mut self, gpu: &Gpu, format: wgpu::TextureFormat) {
+        self.renderer = Some(Renderer::on_device(
+            gpu.device.clone(),
+            gpu.queue.clone(),
+            format,
+            1,
+            1,
+        ));
+    }
+
+    fn render(&mut self, _: &Gpu, encoder: &mut wgpu::CommandEncoder, target: &Target<'_>) {
+        let Some(r) = self.renderer.as_mut() else {
+            return;
+        };
+        r.resize(target.size.0, target.size.1);
+        if let Some(frame) = self.pending.take() {
+            r.upload(&frame);
         }
-        let rgba = self.renderer.read_rgba()?;
-        RgbaImage::from_raw(w, h, rgba)
-            .ok_or_else(|| AppError::Gpu("read-back image has the wrong size".into()))
+        let reg = target.region;
+        if let Some(mut u) = self.uniforms {
+            // The shader works in whole-target coordinates.
+            u.tx += reg.x as f32;
+            u.ty += reg.y as f32;
+            r.set_uniforms(u);
+        }
+        r.draw_image_over(encoder, target.view, (reg.x, reg.y, reg.width, reg.height));
+        self.changed = false;
+    }
+
+    fn changed(&self) -> bool {
+        self.changed
     }
 }
 
@@ -102,30 +96,7 @@ pub fn uniforms(session: &Session, look: Look) -> Option<Uniforms> {
     })
 }
 
-/// A wgpu instance limited to `backend`, with no window system attached.
-pub fn instance(backend: Backend) -> wgpu::Instance {
-    instance_from(
-        backend,
-        wgpu::InstanceDescriptor::new_without_display_handle_from_env(),
-    )
-}
-
-/// A wgpu instance limited to `backend`, starting from `from_env`: a
-/// descriptor that may carry the window system's display handle, which GL
-/// on Wayland (EGL) needs.
-pub fn instance_from(backend: Backend, from_env: wgpu::InstanceDescriptor) -> wgpu::Instance {
-    let backends = match backend {
-        Backend::Auto if std::env::var_os("WGPU_BACKEND").is_some() => from_env.backends,
-        other => other.backends(),
-    };
-    wgpu::Instance::new(wgpu::InstanceDescriptor {
-        backends,
-        ..from_env
-    })
-}
-
-/// Every adapter wgpu can open, per backend: (backend, name, device type,
-/// driver).
+/// Every adapter wgpu can open, on every backend.
 pub fn adapters() -> Vec<wgpu::AdapterInfo> {
     let all = wgpu::Backends::all();
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {

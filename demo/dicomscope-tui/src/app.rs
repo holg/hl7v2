@@ -1,21 +1,20 @@
-//! The interactive viewer: state, the event loop and key handling. Drawing
-//! is in [`crate::ui`]; the study, the order and everything derived from
-//! them live in the shared [`Session`].
+//! The interactive viewer: state and input. Drawing is in [`crate::ui`];
+//! the study, the order and everything derived from them live in the
+//! shared [`Session`]. Terminal and window both come from scopekit: this
+//! file only says what to draw and where the slice goes.
 
-use crate::cli::{GpuArgs, ViewArgs};
-use crate::gpu::{self, ImagePlugin, Look, WgpuPlugin};
-use crate::window::SharedImage;
-use crate::{term, ui};
+use crate::cli::{GpuArgs, Protocol, ViewArgs};
+use crate::gpu::{Look, SliceView};
+use crate::ui;
 use crossterm::event::{
-    self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyEventKind,
-    KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+    Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
 use dicomscope_core::session::Session;
-use image::DynamicImage;
-use ratatui::layout::{Rect, Size};
-use ratatui_image::picker::{Picker, ProtocolType};
-use ratatui_image::protocol::Protocol as Graphic;
-use ratatui_image::Resize;
+use ratatui::layout::Rect;
+use ratatui::Frame;
+use scopekit::{Flow, ViewSlot, Views};
+use std::cell::RefCell;
+use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 /// The panels on the right, in tab order.
@@ -72,33 +71,24 @@ impl Tab {
     }
 }
 
+/// The name the slice's GPU view is registered and placed under.
+pub const SLICE: &str = "slice";
+
 /// Two presses on the same cell within this are a double click.
 const DOUBLE_CLICK: Duration = Duration::from_millis(400);
 
 /// The FHIR resources the FHIR tab cycles through.
 pub const FHIR_RESOURCES: [&str; 4] = ["Bundle", "Patient", "ServiceRequest", "ImagingStudy"];
 
-/// Where the image goes.
-pub enum Mode {
-    /// Into a terminal, rendered by an [`ImagePlugin`] and sent with this
-    /// picker's graphics protocol.
-    Terminal(Picker),
-    /// Into a window, drawn by the [`crate::window::Compositor`] on the
-    /// window's own surface.
-    Window(SharedImage),
-}
-
 /// The viewer state.
 pub struct App {
     /// Study, order and everything derived.
     pub session: Session,
-    /// The image renderer for terminal mode, or why none could be opened.
-    pub plugin: Result<Box<dyn ImagePlugin>, String>,
-    /// Terminal or window.
-    pub mode: Mode,
+    /// The slice on the GPU, shared with scopekit.
+    pub slice: Rc<RefCell<SliceView>>,
     /// The active panel.
     pub tab: Tab,
-    /// Invert and other terminal-side display choices.
+    /// Invert and other viewer-side display choices.
     pub look: Look,
     /// Scroll offset per tab, in lines.
     pub scroll: [u16; 7],
@@ -114,15 +104,9 @@ pub struct App {
     pub help: bool,
     /// A one-shot note for the status bar.
     pub note: Option<String>,
-    /// The rendered image and the cell area it was made for.
-    pub graphic: Option<(Rect, Graphic)>,
-    /// Why the last render failed, if it did.
-    pub render_error: Option<String>,
-    /// Milliseconds the last GPU render and read-back took.
-    pub render_ms: f32,
-    /// Window mode: the image area in surface pixels, last time it was set.
-    region: Option<(u32, u32, u32, u32)>,
-    /// Terminal mode: the image panel in cells, last time it was fitted.
+    /// GPU and graphics protocol, as scopekit reports them.
+    pub describe: String,
+    /// The image panel in cells, last time the view was fitted to it.
     image_cells: Option<Rect>,
     /// The last frame's layout, for mouse hits.
     areas: Option<ui::Areas>,
@@ -132,15 +116,16 @@ pub struct App {
     drag: Option<(MouseButton, u16, u16)>,
     /// The last press, for double clicks.
     last_click: Option<(Instant, u16, u16)>,
+    /// The slice view needs the session's latest state.
     dirty: bool,
     quit: bool,
     started: Instant,
 }
 
 impl App {
-    /// Open the paths and the order, go to the start slice, and, in
-    /// terminal mode, open the GPU.
-    pub fn new(args: &ViewArgs, gpu: GpuArgs, mode: Mode) -> App {
+    /// Open the paths and the order and go to the start slice. Returns the
+    /// app and its GPU view, registered as [`SLICE`], to hand to scopekit.
+    pub fn new(args: &ViewArgs) -> (App, Views) {
         let mut session = Session::new();
         let paths: Vec<String> = args.paths.iter().map(|p| p.display().to_string()).collect();
         session.open_paths(&paths);
@@ -154,21 +139,15 @@ impl App {
                 true,
             );
         }
-        let plugin = match mode {
-            Mode::Terminal(_) => WgpuPlugin::new(gpu.backend)
-                .map(|p| Box::new(p) as Box<dyn ImagePlugin>)
-                .map_err(|e| e.to_string()),
-            Mode::Window(_) => Err("the window draws the image".into()),
-        };
         let tab = if session.set.is_none() && session.hl7.is_some() {
             Tab::Order
         } else {
             Tab::Image
         };
-        App {
+        let (slice, view) = scopekit::share(SliceView::default());
+        let app = App {
             session,
-            plugin,
-            mode,
+            slice,
             tab,
             look: Look::default(),
             scroll: [0; 7],
@@ -178,10 +157,7 @@ impl App {
             doc_selected: 0,
             help: false,
             note: None,
-            graphic: None,
-            render_error: None,
-            render_ms: 0.0,
-            region: None,
+            describe: String::new(),
             image_cells: None,
             areas: None,
             cell_px: (10.0, 20.0),
@@ -190,84 +166,61 @@ impl App {
             dirty: true,
             quit: false,
             started: Instant::now(),
-        }
+        };
+        (app, Views::new().with(SLICE, view))
     }
 
     fn now(&self) -> f64 {
         self.started.elapsed().as_secs_f64()
     }
 
-    /// Re-render the slice when anything changed or the image area moved.
-    /// `area` is the image area in cells.
-    fn refresh_image(&mut self, area: Rect) {
-        if area.width == 0 || area.height == 0 {
-            return;
-        }
-        // Refit only when the panel changed size, not when the graphic was
-        // merely dropped (help box, protocol switch, new series).
-        let moved = self.image_cells != Some(area);
-        if !self.dirty && !moved && self.graphic.is_some() {
-            return;
-        }
-        let Mode::Terminal(picker) = &self.mode else {
-            return;
-        };
-        self.dirty = false;
-        let px = term::cell_pixels(picker, area.width, area.height);
-        if moved {
-            self.image_cells = Some(area);
-            self.session.set_canvas(px);
-            if let Some(img) = self.session.image() {
-                self.session.view = self.session.view.fit(px, img);
-            }
-        }
-        let Ok(plugin) = self.plugin.as_mut() else {
-            return;
-        };
-        if self.session.frame.is_none() {
-            self.graphic = None;
-            return;
-        }
-        let t = Instant::now();
-        match plugin.render(&mut self.session, px, self.look) {
-            Ok(rgba) => {
-                self.render_ms = t.elapsed().as_secs_f32() * 1000.0;
-                match picker.new_protocol(
-                    DynamicImage::ImageRgba8(rgba),
-                    Size::new(area.width, area.height),
-                    Resize::Fit(None),
-                ) {
-                    Ok(g) => {
-                        self.graphic = Some((area, g));
-                        self.render_error = None;
-                    }
-                    Err(e) => self.render_error = Some(e.to_string()),
+    /// Whether the slice is on screen: the Image panel, no document or help
+    /// box over it, and a decoded frame to show.
+    fn image_on_screen(&self) -> bool {
+        self.tab == Tab::Image
+            && self.session.document.is_none()
+            && !self.help
+            && self.session.frame.is_some()
+    }
+}
+
+impl scopekit::App for App {
+    fn draw(&mut self, f: &mut Frame, view: &mut ViewSlot) {
+        let layout = ui::layout(f.area());
+        self.areas = Some(layout);
+        self.cell_px = view.cell_px();
+        self.describe = view.describe().to_string();
+        if self.image_on_screen() {
+            let px = view.px_size(layout.image);
+            // Refit only when the panel changed size, so zoom and pan
+            // survive switching panels and the help box.
+            if self.image_cells != Some(layout.image) {
+                self.image_cells = Some(layout.image);
+                self.session.set_canvas(px);
+                if let Some(img) = self.session.image() {
+                    self.session.view = self.session.view.fit(px, img);
                 }
+                self.dirty = true;
             }
-            Err(e) => self.render_error = Some(e.to_string()),
+            if self.dirty {
+                self.slice.borrow_mut().update(&mut self.session, self.look);
+                self.dirty = false;
+            }
+            view.place(SLICE, layout.image);
+        }
+        ui::draw(f, self, &layout);
+    }
+
+    fn event(&mut self, event: Event) -> Flow {
+        self.handle(event);
+        if self.quit {
+            Flow::Quit
+        } else {
+            Flow::Continue
         }
     }
 
-    /// The event loop, until `q`.
-    pub fn run(mut self, terminal: &mut ratatui::DefaultTerminal) -> std::io::Result<()> {
-        while !self.quit {
-            self.frame(terminal)?;
-            let timeout = if self.session.playing {
-                Duration::from_millis(u64::from(self.session.frame_ms().max(10.0) as u32) / 2)
-            } else {
-                Duration::from_millis(500)
-            };
-            if event::poll(timeout)? {
-                self.handle(event::read()?);
-            }
-            self.tick();
-        }
-        Ok(())
-    }
-
-    /// Advance cine playback when its frame period has passed; `true` when
-    /// the slice changed and the screen needs drawing.
-    pub fn tick(&mut self) -> bool {
+    fn tick(&mut self) -> bool {
         if !self.session.playing {
             return false;
         }
@@ -278,91 +231,14 @@ impl App {
         changed
     }
 
-    /// Render the image if needed and draw one frame, on any backend.
-    pub fn frame<B: ratatui::backend::Backend>(
-        &mut self,
-        terminal: &mut ratatui::Terminal<B>,
-    ) -> std::io::Result<()> {
-        let area = terminal
-            .size()
-            .map_err(|e| std::io::Error::other(e.to_string()))?;
-        let layout = ui::layout(Rect::new(0, 0, area.width, area.height));
-        self.areas = Some(layout);
-        let image_on_screen = self.tab == Tab::Image && self.session.document.is_none();
-        match &self.mode {
-            Mode::Terminal(picker) => {
-                let font = picker.font_size();
-                self.cell_px = (f32::from(font.width), f32::from(font.height));
-                if image_on_screen && !self.help {
-                    self.refresh_image(layout.image);
-                }
-            }
-            Mode::Window(_) => {
-                let size = terminal
-                    .backend_mut()
-                    .window_size()
-                    .map_err(|e| std::io::Error::other(e.to_string()))?;
-                self.cell_px = (
-                    f32::from(size.pixels.width) / f32::from(size.columns_rows.width.max(1)),
-                    f32::from(size.pixels.height) / f32::from(size.columns_rows.height.max(1)),
-                );
-                // The help box covers the image area; the image would be
-                // drawn on top of it.
-                let show = image_on_screen && !self.help;
-                self.refresh_window(layout.image, size, show);
-            }
-        }
-        terminal
-            .draw(|f| ui::draw(f, self, &layout))
-            .map_err(|e| std::io::Error::other(e.to_string()))?;
-        Ok(())
+    fn tick_interval(&self) -> Option<Duration> {
+        self.session
+            .playing
+            .then(|| Duration::from_millis(u64::from(self.session.frame_ms().max(10.0) as u32) / 2))
     }
+}
 
-    /// Window mode: tell the compositor where the image goes and what
-    /// changed. The text grid is stretched over the whole surface, so cell
-    /// column `x` starts at `x * surface_width / columns`.
-    fn refresh_window(&mut self, area: Rect, size: ratatui::backend::WindowSize, show: bool) {
-        let Mode::Window(shared) = &self.mode else {
-            return;
-        };
-        let (cols, rows) = (
-            u32::from(size.columns_rows.width.max(1)),
-            u32::from(size.columns_rows.height.max(1)),
-        );
-        let (pw, ph) = (u32::from(size.pixels.width), u32::from(size.pixels.height));
-        let x0 = u32::from(area.x) * pw / cols;
-        let y0 = u32::from(area.y) * ph / rows;
-        let x1 = u32::from(area.x + area.width) * pw / cols;
-        let y1 = u32::from(area.y + area.height) * ph / rows;
-        let region = (x0, y0, x1.saturating_sub(x0), y1.saturating_sub(y0));
-        let mut sh = shared.borrow_mut();
-        if !show || region.2 == 0 || region.3 == 0 {
-            if sh.region.take().is_some() {
-                sh.dirty = true;
-            }
-            return;
-        }
-        let moved = self.region != Some(region);
-        if moved {
-            self.region = Some(region);
-            let px = (region.2, region.3);
-            self.session.set_canvas(px);
-            if let Some(img) = self.session.image() {
-                self.session.view = self.session.view.fit(px, img);
-            }
-        }
-        if !self.dirty && !moved && sh.region.is_some() {
-            return;
-        }
-        self.dirty = false;
-        if let Some(frame) = self.session.take_pending_frame() {
-            sh.pending = Some(frame);
-        }
-        sh.uniforms = gpu::uniforms(&self.session, self.look);
-        sh.region = self.session.frame.as_ref().map(|_| region);
-        sh.dirty = true;
-    }
-
+impl App {
     /// Apply one terminal event.
     pub fn handle(&mut self, e: Event) {
         match e {
@@ -378,12 +254,10 @@ impl App {
         self.quit
     }
 
-    /// Open or close the key help. Terminal graphics are drawn above the
-    /// text, so the image is dropped while help is up and sent again after.
+    /// Open or close the key help. While it is open the slice is not
+    /// placed: in a window it would be drawn over the help box.
     fn set_help(&mut self, on: bool) {
         self.help = on;
-        self.graphic = None;
-        self.dirty = true;
     }
 
     fn mouse(&mut self, m: MouseEvent) {
@@ -521,7 +395,6 @@ impl App {
 
     fn series(&mut self, delta: i32) {
         self.session.switch_series(delta);
-        self.graphic = None;
         self.dirty = true;
     }
 
@@ -564,7 +437,6 @@ impl App {
             KeyCode::F(n @ 1..=7) => return self.set_tab(Tab::ALL[usize::from(n) - 1]),
             KeyCode::Char('[') => return self.series(-1),
             KeyCode::Char(']') => return self.series(1),
-            KeyCode::Char('p') => return self.next_protocol(),
             _ => {}
         }
         match self.tab {
@@ -589,26 +461,6 @@ impl App {
     fn set_tab(&mut self, t: Tab) {
         self.tab = t;
         self.dirty = true;
-    }
-
-    fn next_protocol(&mut self) {
-        let Mode::Terminal(picker) = &mut self.mode else {
-            self.note = Some("the window draws the image itself; no protocol to switch".into());
-            return;
-        };
-        let next = match picker.protocol_type() {
-            ProtocolType::Kitty => ProtocolType::Iterm2,
-            ProtocolType::Iterm2 => ProtocolType::Sixel,
-            ProtocolType::Sixel => ProtocolType::Halfblocks,
-            ProtocolType::Halfblocks => ProtocolType::Kitty,
-        };
-        picker.set_protocol_type(next);
-        self.graphic = None;
-        self.dirty = true;
-        self.note = Some(format!(
-            "graphics: {} (if the image vanishes, this terminal does not speak it)",
-            term::protocol_name(picker)
-        ));
     }
 
     fn text_key(&mut self, k: KeyEvent) {
@@ -703,17 +555,33 @@ impl App {
     }
 }
 
-/// Run the viewer until the user quits, restoring the terminal on the way
-/// out, panics included.
-pub fn run(args: &ViewArgs, gpu: GpuArgs) -> std::io::Result<()> {
-    let mut terminal = ratatui::init();
-    crossterm::execute!(std::io::stdout(), EnableMouseCapture)?;
-    // After entering the alternate screen, before reading events: the
-    // query writes escape sequences and reads the answers from stdin.
-    let picker = term::picker(args.protocol);
-    let app = App::new(args, gpu, Mode::Terminal(picker));
-    let result = app.run(&mut terminal);
-    let _ = crossterm::execute!(std::io::stdout(), DisableMouseCapture);
-    ratatui::restore();
-    result
+/// Run the viewer, in the terminal or with `--window` in its own window,
+/// until the user quits.
+pub fn run(args: &ViewArgs, gpu: GpuArgs) -> Result<(), String> {
+    let (mut app, views) = App::new(args);
+    let config = scopekit::Config {
+        mode: if args.window {
+            scopekit::Mode::Window
+        } else {
+            scopekit::Mode::Terminal
+        },
+        backend: gpu.backend.into(),
+        protocol: args.protocol.into(),
+        title: "dicomscope".into(),
+        font: args.font.clone(),
+        ..scopekit::Config::default()
+    };
+    scopekit::run(&mut app, views, &config)
+}
+
+impl From<Protocol> for scopekit::Protocol {
+    fn from(p: Protocol) -> Self {
+        match p {
+            Protocol::Auto => scopekit::Protocol::Auto,
+            Protocol::Kitty => scopekit::Protocol::Kitty,
+            Protocol::Iterm2 => scopekit::Protocol::Iterm2,
+            Protocol::Sixel => scopekit::Protocol::Sixel,
+            Protocol::Halfblocks => scopekit::Protocol::Halfblocks,
+        }
+    }
 }

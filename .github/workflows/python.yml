@@ -1,14 +1,16 @@
 name: python
 
-# Builds and publishes the Python wheels for the two PyO3 binding crates,
-# crates/hl7kit-py (PyPI: hl7kit) and crates/mwlkit-py (PyPI: mwlkit).
+# Builds and publishes the Python wheels for the PyO3 binding crates:
+# crates/hl7kit-py (PyPI: hl7kit), crates/mwlkit-py (PyPI: mwlkit) and
+# crates/fhirkit-py (PyPI: fhirkit-rs; "fhirkit" on PyPI is someone else's).
 #
 # Branches, pull requests and pushes to main build and test everything and
 # publish nothing. A tag
-# hl7kit-py-vX.Y.Z or mwlkit-py-vX.Y.Z publishes that one package to PyPI
+# hl7kit-py-vX.Y.Z, mwlkit-py-vX.Y.Z or fhirkit-py-vX.Y.Z publishes that one
+# package to PyPI
 # with attestations and creates a GitHub release carrying the same files.
-# Both packages are always built, because mwlkit's smoke test installs the
-# hl7kit wheel from the same run, never from an index.
+# All packages are always built; mwlkit's smoke test installs the hl7kit
+# wheel from the same run, never from an index.
 #
 # Credentials: PyPI Trusted Publishing (OIDC) through the `pypi` GitHub
 # environment. No tokens, no secrets.
@@ -21,6 +23,8 @@ on:
       - "crates/mwlkit/**"
       - "crates/hl7kit-py/**"
       - "crates/mwlkit-py/**"
+      - "crates/fhirkit/**"
+      - "crates/fhirkit-py/**"
       - ".github/workflows/python.yml"
   push:
     branches:
@@ -30,10 +34,13 @@ on:
       - "crates/mwlkit/**"
       - "crates/hl7kit-py/**"
       - "crates/mwlkit-py/**"
+      - "crates/fhirkit/**"
+      - "crates/fhirkit-py/**"
       - ".github/workflows/python.yml"
     tags:
       - "hl7kit-py-v*"
       - "mwlkit-py-v*"
+      - "fhirkit-py-v*"
   workflow_dispatch:
 
 permissions:
@@ -54,6 +61,8 @@ jobs:
       # The crate a tag selects for PyPI, empty on branches.
       release_crate: ${{ steps.check.outputs.release_crate }}
       release_version: ${{ steps.check.outputs.release_version }}
+      # The PyPI project that crate publishes as.
+      release_pypi: ${{ steps.check.outputs.release_pypi }}
     steps:
       - uses: actions/checkout@v4
       - name: Cargo.toml and pyproject.toml versions match, and the tag if any
@@ -61,7 +70,7 @@ jobs:
         shell: python
         run: |
           import os, re, sys, tomllib
-          crates = {"hl7kit-py": "hl7kit", "mwlkit-py": "mwlkit"}
+          crates = {"hl7kit-py": "hl7kit", "mwlkit-py": "mwlkit", "fhirkit-py": "fhirkit-rs"}
           versions = {}
           for crate in crates:
               cargo = tomllib.load(open(f"crates/{crate}/Cargo.toml", "rb"))["package"]["version"]
@@ -74,9 +83,9 @@ jobs:
           release_crate, release_version = "", ""
           if ref.startswith("refs/tags/"):
               tag = ref[len("refs/tags/"):]
-              m = re.fullmatch(r"(hl7kit-py|mwlkit-py)-v(.+)", tag)
+              m = re.fullmatch(r"(hl7kit-py|mwlkit-py|fhirkit-py)-v(.+)", tag)
               if not m:
-                  sys.exit(f"tag {tag} is not hl7kit-py-vX.Y.Z or mwlkit-py-vX.Y.Z")
+                  sys.exit(f"tag {tag} is not hl7kit-py-, mwlkit-py- or fhirkit-py-vX.Y.Z")
               release_crate, release_version = m.group(1), m.group(2)
               if versions[release_crate] != release_version:
                   sys.exit(f"tag {tag} but crates/{release_crate} is at {versions[release_crate]}")
@@ -84,6 +93,7 @@ jobs:
           with open(os.environ["GITHUB_OUTPUT"], "a") as out:
               out.write(f"release_crate={release_crate}\n")
               out.write(f"release_version={release_version}\n")
+              out.write(f"release_pypi={crates.get(release_crate, '')}\n")
 
   # ---------------------------------------------------------------------
   rust:
@@ -101,6 +111,7 @@ jobs:
             . -> target
             crates/hl7kit-py -> target
             crates/mwlkit-py -> target
+            crates/fhirkit-py -> target
       # The binding crates' unit tests link against a host interpreter
       # (extension-module is a maturin-only feature).
       - uses: actions/setup-python@v5
@@ -109,16 +120,16 @@ jobs:
           python-version: "3.12"
       - name: Library crates
         run: |
-          cargo fmt -p hl7kit -p mwlkit -- --check
-          cargo clippy -p hl7kit -p mwlkit --all-targets -- -D warnings
-          cargo test -p hl7kit -p mwlkit
+          cargo fmt -p hl7kit -p mwlkit -p fhirkit -- --check
+          cargo clippy -p hl7kit -p mwlkit -p fhirkit --all-targets -- -D warnings
+          cargo test -p hl7kit -p mwlkit -p fhirkit
       - name: Binding crates
         env:
           PYO3_PYTHON: ${{ steps.py.outputs.python-path }}
         run: |
           libdir="$("$PYO3_PYTHON" -c 'import sysconfig; print(sysconfig.get_config_var("LIBDIR"))')"
           export LD_LIBRARY_PATH="$libdir${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-          for crate in hl7kit-py mwlkit-py; do
+          for crate in hl7kit-py mwlkit-py fhirkit-py; do
             echo "::group::$crate"
             ( cd "crates/$crate" && cargo fmt -- --check && cargo clippy --all-targets -- -D warnings && cargo test )
             echo "::endgroup::"
@@ -307,6 +318,93 @@ jobs:
           path: crates/mwlkit-py/dist/*.whl
           if-no-files-found: error
 
+  wheels-fhirkit:
+    name: fhirkit wheel ${{ matrix.id }}
+    needs: rust
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: manylinux_2_28-x86_64
+            os: ubuntu-latest
+            target: x86_64
+            manylinux: "2_28"
+            interpreter: python3.9
+            smoke: native
+          - id: manylinux_2_28-aarch64
+            os: ubuntu-latest
+            target: aarch64
+            manylinux: "2_28"
+            interpreter: python3.9
+            smoke: none
+          - id: musllinux_1_2-x86_64
+            os: ubuntu-latest
+            target: x86_64
+            manylinux: musllinux_1_2
+            interpreter: python3.9
+            smoke: alpine
+          - id: macos-universal2
+            os: macos-14
+            target: universal2-apple-darwin
+            manylinux: auto
+            interpreter: setup-python
+            smoke: native
+          - id: windows-x64
+            os: windows-latest
+            target: x64
+            manylinux: auto
+            interpreter: setup-python
+            smoke: native
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        id: py
+        with:
+          python-version: ${{ env.PYTHON_FLOOR }}
+      - name: Interpreter for maturin
+        id: interp
+        shell: bash
+        run: |
+          if [ "${{ matrix.interpreter }}" = "setup-python" ]; then
+            echo "path=${{ steps.py.outputs.python-path }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "path=${{ matrix.interpreter }}" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Build wheel
+        uses: PyO3/maturin-action@v1
+        with:
+          working-directory: crates/fhirkit-py
+          target: ${{ matrix.target }}
+          manylinux: ${{ matrix.manylinux }}
+          args: --release --out dist --interpreter ${{ steps.interp.outputs.path }}
+          sccache: true
+      - name: Exactly one wheel
+        shell: bash
+        run: |
+          ls -la crates/fhirkit-py/dist
+          test "$(find crates/fhirkit-py/dist -name '*.whl' | wc -l)" -eq 1
+      - name: Smoke test (native)
+        if: matrix.smoke == 'native'
+        shell: bash
+        run: |
+          "${{ steps.py.outputs.python-path }}" -m pip install --upgrade pip
+          "${{ steps.py.outputs.python-path }}" -m pip install --only-binary=:all: --find-links crates/fhirkit-py/dist "fhirkit-rs[test]"
+          "${{ steps.py.outputs.python-path }}" -m pip show fhirkit-rs
+          "${{ steps.py.outputs.python-path }}" -m pytest -q crates/fhirkit-py/tests
+      - name: Smoke test (musllinux, in Alpine)
+        if: matrix.smoke == 'alpine'
+        run: |
+          docker run --rm -v "$PWD:/w" -w /w python:${{ env.PYTHON_FLOOR }}-alpine sh -ec '
+            pip install --only-binary=:all: --find-links crates/fhirkit-py/dist "fhirkit-rs[test]"
+            pip show fhirkit-rs
+            pytest -q crates/fhirkit-py/tests'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheels-fhirkit-py-${{ matrix.id }}
+          path: crates/fhirkit-py/dist/*.whl
+          if-no-files-found: error
+
   # ---------------------------------------------------------------------
   sdist:
     name: sdist ${{ matrix.crate }}
@@ -314,7 +412,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        crate: [hl7kit-py, mwlkit-py]
+        crate: [hl7kit-py, mwlkit-py, fhirkit-py]
     steps:
       - uses: actions/checkout@v4
       - uses: PyO3/maturin-action@v1
@@ -331,12 +429,12 @@ jobs:
   # ---------------------------------------------------------------------
   publish-pypi:
     name: publish ${{ needs.versions.outputs.release_crate }} to PyPI
-    needs: [versions, wheels-hl7kit, wheels-mwlkit, sdist]
+    needs: [versions, wheels-hl7kit, wheels-mwlkit, wheels-fhirkit, sdist]
     if: startsWith(github.ref, 'refs/tags/') && needs.versions.outputs.release_crate != ''
     runs-on: ubuntu-latest
     environment:
       name: pypi
-      url: https://pypi.org/project/${{ needs.versions.outputs.release_crate == 'hl7kit-py' && 'hl7kit' || 'mwlkit' }}/
+      url: https://pypi.org/project/${{ needs.versions.outputs.release_pypi }}/
     permissions:
       id-token: write
       contents: write
@@ -361,4 +459,4 @@ jobs:
           gh release create "$GITHUB_REF_NAME" dist/* \
             --repo "$GITHUB_REPOSITORY" \
             --title "${{ needs.versions.outputs.release_crate }} ${{ needs.versions.outputs.release_version }}" \
-            --notes "Python wheels and sdist for ${{ needs.versions.outputs.release_crate == 'hl7kit-py' && 'hl7kit' || 'mwlkit' }} ${{ needs.versions.outputs.release_version }}, as published to PyPI with attestations."
+            --notes "Python wheels and sdist for ${{ needs.versions.outputs.release_pypi }} ${{ needs.versions.outputs.release_version }}, as published to PyPI with attestations."

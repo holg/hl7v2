@@ -1,4 +1,4 @@
-# hl7kit · mwlkit · dicomscope
+# hl7kit · mwlkit · fhirkit · dicomscope
 
 [![CI](https://github.com/holg/hl7v2/actions/workflows/ci.yml/badge.svg)](https://github.com/holg/hl7v2/actions/workflows/ci.yml)
 [![demo](https://github.com/holg/hl7v2/actions/workflows/pages.yml/badge.svg)](https://holg.github.io/hl7v2/)
@@ -7,69 +7,170 @@
 [![python wheels](https://github.com/holg/hl7v2/actions/workflows/python.yml/badge.svg)](https://github.com/holg/hl7v2/actions/workflows/python.yml)
 [![crates.io hl7kit](https://img.shields.io/crates/v/hl7kit.svg?label=crates.io%20hl7kit)](https://crates.io/crates/hl7kit)
 [![crates.io mwlkit](https://img.shields.io/crates/v/mwlkit.svg?label=crates.io%20mwlkit)](https://crates.io/crates/mwlkit)
+[![crates.io fhirkit](https://img.shields.io/crates/v/fhirkit.svg?label=crates.io%20fhirkit)](https://crates.io/crates/fhirkit)
 [![docs.rs hl7kit](https://docs.rs/hl7kit/badge.svg)](https://docs.rs/hl7kit)
 [![docs.rs mwlkit](https://docs.rs/mwlkit/badge.svg)](https://docs.rs/mwlkit)
+[![docs.rs fhirkit](https://docs.rs/fhirkit/badge.svg)](https://docs.rs/fhirkit)
 [![PyPI hl7kit](https://img.shields.io/pypi/v/hl7kit?label=pypi%20hl7kit)](https://pypi.org/project/hl7kit/)
 [![PyPI mwlkit](https://img.shields.io/pypi/v/mwlkit?label=pypi%20mwlkit)](https://pypi.org/project/mwlkit/)
-[![Python versions](https://img.shields.io/pypi/pyversions/hl7kit)](https://pypi.org/project/hl7kit/)
-[![downloads](https://img.shields.io/pypi/dm/hl7kit)](https://pypistats.org/packages/hl7kit)
+[![PyPI fhirkit-rs](https://img.shields.io/pypi/v/fhirkit-rs?label=pypi%20fhirkit-rs)](https://pypi.org/project/fhirkit-rs/)
 [![license](https://img.shields.io/crates/l/hl7kit.svg)](#license)
 ![MSRV 1.85](https://img.shields.io/badge/MSRV-1.85-blue.svg)
 
-Rust for the seam between the radiology information system and the
-archive: the HL7 v2 order that schedules an examination, the DICOM
-worklist entry the modality reads, the images that come back, and the
-FHIR resources that describe the whole thing afterwards. Three pieces,
-each usable on its own:
+Rust for the seam between the radiology information system (RIS), the
+archive (PACS/VNA), modalities, and FHIR: the HL7 v2 order that schedules an
+examination, the DICOM Modality Worklist entry the modality reads, the images
+that return, and the FHIR resources that describe the entire workflow.
 
-| | What | Where |
+Everything is pure Rust with `#![forbid(unsafe_code)]` in library crates
+(except the thin Objective-C bridge on iOS), zero runtime network dependencies,
+no panics on untrusted input data, and full `wasm32-unknown-unknown` support.
+
+---
+
+## Overview
+
+| Component | What it does | Links & Packages |
 |---|---|---|
-| **hl7kit** | Dependency-free HL7 v2.x parser and builder with the byte span of every field, repetition, component and subcomponent, plus extraction of the four IHE imaging-order identifiers with their source and conflicts | [crates.io](https://crates.io/crates/hl7kit) · [PyPI](https://pypi.org/project/hl7kit/) · [`crates/hl7kit`](crates/hl7kit) |
-| **mwlkit** | An hl7kit order turned into a DICOM Modality Worklist item per IHE RAD-4, every mapping choice sourced, every invented value reported, written as a Part 10 file | [crates.io](https://crates.io/crates/mwlkit) · [PyPI](https://pypi.org/project/mwlkit/) · [`crates/mwlkit`](crates/mwlkit) |
-| **dicomscope** | A DICOM viewer that loads a study next to its order, shows the linkage order → worklist → image → FHIR, and runs in the browser, on the desktop and on an iPad from one code base | [live demo](https://holg.github.io/hl7v2/) · [`demo/`](demo) |
+| **hl7kit** | Dependency-free HL7 v2.x parser and builder with exact byte spans for every element, plus IHE imaging-order identifier extraction (Accession, Study Instance UID, Requested Procedure ID, SPS ID) with source tracking and conflict detection. | [crates.io](https://crates.io/crates/hl7kit) · [PyPI](https://pypi.org/project/hl7kit/) · [`crates/hl7kit`](crates/hl7kit) |
+| **mwlkit** | Turns an HL7 order into a DICOM Modality Worklist item per IHE RAD-4, tracking mapping decisions, reporting generated values, and writing Part 10 files. | [crates.io](https://crates.io/crates/mwlkit) · [PyPI](https://pypi.org/project/mwlkit/) · [`crates/mwlkit`](crates/mwlkit) |
+| **fhirkit** | Zero-dependency, high-performance FHIR R4 models for all 146 resources and datatypes. Lossless JSON reader/writer preserving exact decimal precision and primitive extensions; parallel parsing across cores. | [crates.io](https://crates.io/crates/fhirkit) · [PyPI (fhirkit-rs)](https://pypi.org/project/fhirkit-rs/) · [`crates/fhirkit`](crates/fhirkit) |
+| **dicomscope** | In-browser DICOM viewer and CLI tool. Links studies to orders, highlights raw HL7 spans, builds worklist entries and MII-profiled FHIR R4 bundles. Audited 100% client-side with zero network calls after load. | [Live Demo](https://holg.github.io/hl7v2/) · [`demo/dicomscope`](demo/dicomscope) |
+| **dicomscope-desktop** | Native desktop (Linux, macOS, Windows) and iPad DICOM viewer. Native file dialogs, cine playback, SR and encapsulated PDF documents, Metal/Vulkan/DX12/OpenGL backends. | [`demo/dicomscope-desktop`](demo/dicomscope-desktop) |
+| **dicomscope-tui** | Terminal viewer and scriptable CLI tool. Inline GPU-rendered slices via Kitty, iTerm2, Sixel, or Unicode half-blocks, plus standalone `--window` mode via `ratatui-wgpu`. | [`demo/dicomscope-tui`](demo/dicomscope-tui) |
 
-Everything is Rust, `#![forbid(unsafe_code)]` except the Objective-C border
-on iOS, with no panics on input data and no network I/O anywhere. The
-libraries compile unchanged for `wasm32-unknown-unknown`.
+---
 
-## hl7kit
+## Tech Stack
 
-A parser built for integration work, where most messages are slightly
-wrong: `\r`, `\r\n` and bare `\n` terminators, MLLP framing, a BOM and a
-malformed MSH-2 are all accepted and each is reported through
-`msg.warnings()`. MSH-1 and MSH-2 are numbered as the standard numbers
-them. Escape sequences decode on demand and never silently.
+- **Language**: Rust (Edition 2021, MSRV 1.85), Python (3.9+ for PyO3 bindings), WGSL (GPU compute & fragment shaders).
+- **Package Managers**: Cargo (Rust workspace), pip / maturin (Python packages).
+- **Frameworks & Core Libraries**:
+  - **Web**: [Leptos](https://leptos.dev) (CSR), [wgpu](https://wgpu.rs) (WebGPU), wasm-bindgen, [Trunk](https://trunkrs.dev).
+  - **Desktop / Mobile**: [winit](https://github.com/rust-windowing/winit), [egui](https://github.com/emilk/egui), wgpu (Metal, Vulkan, DX12, OpenGL), xcodegen (iOS).
+  - **Terminal / CLI**: [Ratatui](https://ratatui.rs), `ratatui-wgpu`, `crossterm`.
+  - **DICOM**: `dicom-rs` (`dicom-pixeldata`, `dicom-object`, `dicom-dictionary-std`).
+  - **Python Bindings**: [PyO3](https://pyo3.rs), [maturin](https://github.com/PyO3/maturin).
 
+---
+
+## Requirements & Prerequisites
+
+- **Rust Toolchain**: Rust 1.85 or newer (`rustfmt` and `clippy` components).
+- **Wasm Target** (for web demo and wasm checks):
+  ```sh
+  rustup target add wasm32-unknown-unknown
+  ```
+- **Trunk** (for running and building the browser demo):
+  ```sh
+  cargo install trunk --version 0.21.14
+  ```
+- **Python** (optional, for building and testing Python wheels):
+  - Python 3.9+ with `maturin` and `pytest`.
+- **Xcode & xcodegen** (optional, for iOS iPad build):
+  - Xcode 15+, `xcodegen`, and `aarch64-apple-ios` target (`rustup target add aarch64-apple-ios`).
+
+---
+
+## Quick Start & Setup
+
+### 1. Build and Run the Applications
+
+#### Browser Demo (Leptos + WebGPU)
+```sh
+cd demo/dicomscope
+trunk serve            # Open http://127.0.0.1:8080
+trunk build --release  # Build static bundle in dist/
+```
+
+#### Native Desktop App (egui + wgpu)
+```sh
+# Run on desktop (Metal on macOS, Vulkan/DX12 on Linux/Windows, GL fallback)
+cargo run --profile native -p dicomscope-desktop -- samples/anonymized-demo-clean.zip
+```
+
+#### Terminal Viewer & CLI (Ratatui + wgpu)
+```sh
+# Terminal viewer (auto-detects Kitty, iTerm2, Sixel, or half-blocks)
+cargo run -p dicomscope-tui --release -- samples/anonymized-demo.zip samples/anonymized-demo.hl7
+
+# Standalone native window mode (full resolution without terminal graphics)
+cargo run -p dicomscope-tui --release -- --window samples/anonymized-demo.zip samples/anonymized-demo.hl7
+```
+
+#### iPad App
+```sh
+cd demo/dicomscope-desktop/ios
+xcodegen generate
+xcodebuild -project dicomscope.xcodeproj -scheme dicomscope -configuration Release \
+  -destination "id=<device UDID>" -allowProvisioningUpdates -derivedDataPath build build
+```
+
+---
+
+## CLI & Entry Points
+
+### `dicomscope-tui` CLI Subcommands
+The `dicomscope-tui` binary serves as both an interactive viewer and a scriptable CLI:
+
+```sh
+# Check study against order (exit code 0 = linked, 3 = mismatch / conflict)
+cargo run -q -p dicomscope-tui -- link study.zip order.hl7 --json
+
+# Inspect study metadata, series, skipped files
+cargo run -q -p dicomscope-tui -- info study.zip --json
+
+# Dump DICOM tags with filtering
+cargo run -q -p dicomscope-tui -- tags study.zip --series 1 --slice 10 --grep patient
+
+# GPU offscreen render of a slice to PNG
+cargo run -q -p dicomscope-tui -- render study.zip --series 1 --slice 10 --window 40/400 -o slice.png
+
+# Generate FHIR R4 Bundle from study + order
+cargo run -q -p dicomscope-tui -- fhir study.zip order.hl7 -o bundle.json
+
+# Build DICOM Modality Worklist item from order
+cargo run -q -p dicomscope-tui -- worklist order.hl7 -o order.mwl.dcm
+
+# List or extract embedded Structured Reports and PDFs
+cargo run -q -p dicomscope-tui -- docs study.zip --show 1 -o report.txt
+```
+
+### `dicomscope` Host CLI
+```sh
+# Header check across DICOM files or folders
+cargo run -p dicomscope -- samples/dicom/*.dcm
+
+# Synthesize an HL7 ORM^O01 order matching a study
+cargo run -p dicomscope -- order study.zip -o order.hl7
+
+# Pack a folder or large export into a compact deflated zip
+cargo run --release -p dicomscope -- pack exported-folder -o study.zip --series 1,5 --every 3
+
+# Generate FHIR R4 Bundle
+cargo run -q -p dicomscope -- fhir study.zip order.hl7 -o bundle.json
+```
+
+---
+
+## Library Usage
+
+### Rust
+
+#### `hl7kit`
 ```rust
 use hl7kit::{Message, order::Order};
 
 let msg = Message::parse(text)?;
 assert_eq!(msg.get("PID-3.1"), Some("4MR1"));
-assert_eq!(msg.get("OBX[3]-5"), Some("three"));       // third OBX, field 5
-let span = msg.get_span("ZDS-1.1")?;                  // byte range in msg.raw()
+assert_eq!(msg.get("OBX[3]-5"), Some("three"));
+let span = msg.get_span("ZDS-1.1")?; // Exact byte range in msg.raw()
 
 let order = Order::extract(&msg);
-order.study_uid;          // IPC-3.1, else ZDS-1.1, else OBX DCM 110180
-order.study_uid_source;   // which one it was
-order.warnings;           // ConflictingStudyUid when they disagree
+println!("Study UID: {:?} (Source: {:?})", order.study_uid, order.study_uid_source);
 ```
 
-Query paths are `SEG[occurrence]-field[repetition].component.subcomponent`,
-one-based. The builder writes messages back with correct escaping. Full
-description in the [crate README](crates/hl7kit/README.md) and on
-[docs.rs](https://docs.rs/hl7kit).
-
-## mwlkit
-
-The modality copies Patient ID, Accession Number, Study Instance UID,
-Requested Procedure ID and SPS ID from the worklist entry into every image,
-so the entry is the hinge of RIS/PACS linkage. mwlkit builds it from an
-order and refuses to guess: a Type 1 attribute the order lacks is an error,
-the only generated value is the Study Instance UID under an explicit policy
-(dcm4che-style name-based, caller-supplied random bits, or refuse), and
-values over the VR length are refused unless truncation is asked for,
-never for AE titles or UIDs.
-
+#### `mwlkit`
 ```rust
 use hl7kit::{Message, order::Order};
 use mwlkit::{worklist_item, to_bytes, Input, Options};
@@ -77,118 +178,150 @@ use mwlkit::{worklist_item, to_bytes, Input, Options};
 let msg = Message::parse(text)?;
 let order = Order::extract(&msg);
 let item = worklist_item(&Input { message: &msg, order: &order }, &Options::default())?;
-for w in &item.warnings { eprintln!("{w}"); }   // what was defaulted, translated, generated
+for w in &item.warnings { eprintln!("{w}"); }
 std::fs::write("order.mwl.dcm", to_bytes(&item)?)?;
 ```
 
-The mapping table with its IHE and dcm4che sources, the UID and length
-policies and the non-goals are in the [crate README](crates/mwlkit/README.md).
+#### `fhirkit`
+```rust
+use fhirkit::r4::{Observation, ObservationValue};
 
-## dicomscope
+// Strict parsing
+let obs: Observation = fhirkit::from_json_strict(r#"{
+  "resourceType": "Observation",
+  "status": "final",
+  "code": {"text": "Body weight"},
+  "valueQuantity": {"value": 72.50, "unit": "kg"}
+}"#)?;
 
-One core, three shells. `demo/dicomscope-core` holds everything that is
-not a user interface: DICOM loading from folders and zips, series scanning
-and slice ordering, pixel decoding for the common transfer syntaxes,
-windowing in a WGSL shader, measurements, the order linkage, the worklist
-item, the FHIR R4 output, and the annotation tools. It is tested on the
-host, and the shells only draw it.
-
-- **Browser** ([live demo](https://holg.github.io/hl7v2/), `demo/dicomscope`):
-  Leptos and WebGPU, no JavaScript written by hand, nothing leaves the tab.
-  Drop a study and an order; see the series, the HL7 message with the four
-  identifiers highlighted from their spans, the linkage verdict (including
-  the headline case: linked, but the patient identifiers disagree), the
-  worklist item with its notes and the chain order → worklist → image, and
-  the FHIR bundle, which CI validates with the HL7 validator against the
-  MII Bildgebung profile on every commit.
-- **Desktop** (`demo/dicomscope-desktop`): winit, wgpu on Vulkan, Metal,
-  DX12 or OpenGL, egui panels. No WebGPU and no webview, so it runs on
-  Linux LTS machines. Same panels, plus native file dialogs, drag and drop,
-  cine, SR and PDF documents, and a speed-first build profile.
-- **iPad** (`demo/dicomscope-desktop/ios`): the same crate as a static
-  library in a signed app, Metal underneath, touch gestures (two fingers
-  scroll slices and set the level, pinch zooms), the document picker and
-  "Open in dicomscope". Verified on an iPad Pro 10.5" on iOS 17.
-- **For dentists**: a nerve tool that traces the mandibular canal as a
-  yellow tube in millimetres, a local-contrast enhancement in the shader
-  that brings the canal's cortical lines out, and a first semi-automatic
-  canal finder. All of it is an annotation aid the dentist edits, not a
-  detection device.
-
-```sh
-cd demo/dicomscope && trunk serve                                             # browser, http://localhost:8080
-cargo run --profile native -p dicomscope-desktop -- study.zip order.hl7        # desktop
-cargo run -q -p dicomscope -- fhir study.zip order.hl7 -o bundle.json          # host CLI: check, order, pack, fhir
+// Lenient parsing: collects issues with exact JSON element paths
+let (obs, issues) = fhirkit::from_json::<Observation>(json_text)?;
+for issue in &issues {
+    println!("{issue}");
+}
 ```
 
-Details, supported transfer syntaxes, the no-network guarantee and the
-iPad build recipe are in the [demo README](demo/dicomscope/README.md).
+### Python Wheels
 
-## Python
-
-Both libraries ship as wheels with no runtime dependencies, for Python 3.9
-and newer on Linux (glibc and musl), macOS and Windows:
-
+Install via pip:
 ```sh
-pip install hl7kit            # parser, spans, order linkage; `hl7kit inspect order.hl7`
-pip install "mwlkit[pydicom]" # HL7 order -> Modality Worklist item, bytes for pydicom
+pip install hl7kit            # HL7 v2 parser, spans, and order extraction
+pip install "mwlkit[pydicom]" # HL7 order -> DICOM Modality Worklist item
+pip install fhirkit-rs        # FHIR R4 models & JSON engine (import as `fhirkit`)
 ```
 
 ```python
-import hl7kit, mwlkit
+import hl7kit, mwlkit, fhirkit
+
+# HL7 & MWL
 msg = hl7kit.parse(open("order.hl7", "rb").read())
-o = msg.order()
-print(o.accession_number, o.study_uid.value, o.study_uid.source, o.warnings)
+order = msg.order()
+print(order.accession_number, order.study_uid.value, order.study_uid.source)
+
 item = mwlkit.worklist_item(msg, default_station_ae="OPG1_AE")
-ds = mwlkit.to_pydicom(item)    # or item.to_bytes() for a file
+dataset = mwlkit.to_pydicom(item)
+
+# FHIR R4: parse (str, bytes or dict), every problem with its path, lossless JSON back
+patient = fhirkit.parse('{"resourceType": "Patient", "name": [{"family": "Everyman", "given": ["Adam"]}], "gender": "male"}')
+print(patient.resource_type, patient.issues)   # Patient []
+for issue in fhirkit.validate({"resourceType": "Observation", "valueString": "x", "valueBoolean": True}):
+    print(issue)                                # error at Observation.value[x]: only one type may be given ...
+json_str = patient.to_json(pretty=True)
 ```
 
-The binding crates are `crates/hl7kit-py` and `crates/mwlkit-py`; the
-wheels are built and published by `.github/workflows/python.yml`.
+---
 
-## Repository layout
+## Scripts
 
-| Path | What |
-| --- | --- |
-| `crates/hl7kit` | The parser library. `cargo test -p hl7kit` |
-| `crates/mwlkit` | Order to worklist item, on top of hl7kit and dicom-rs |
-| `crates/hl7kit-py`, `crates/mwlkit-py` | PyO3 bindings; standalone packages built by maturin, not workspace members |
-| `demo/dicomscope-core` | The viewer's domain code and renderer, host-tested |
-| `demo/dicomscope` | Browser app and host CLI |
-| `demo/dicomscope-desktop` | Native app, with the iPad project under `ios/` |
-| `samples/` | HL7 fixtures used by the tests and the demo; DICOM samples are fetched, not committed |
+| Script | Description |
+|---|---|
+| `./local-ci.sh` | Local CI runner matching GitHub Actions: runs `cargo fmt`, clippy (host + wasm32), fetches fixtures, tests workspace, verifies no network APIs in demo, and builds/tests Python wheels if environment is set. |
+| `./local-ci.sh --full` | Same as `./local-ci.sh`, plus compiles the release WebAssembly bundle with Trunk. |
+| `crates/fhirkit/fetch-fixtures.sh` | Fetches the official FHIR R4 core package (`hl7.fhir.r4.core`), R4 examples package (`hl7.fhir.r4.examples`), and SQL-on-FHIR test suite into `tmp/fhir/`. |
+| `samples/fetch-dicom.sh` | Downloads test DICOM files from pydicom test corpus into `samples/dicom/` (synthetic, no real patient data). |
+
+---
+
+## Environment Variables
+
+| Variable | Scope / Tool | Purpose |
+|---|---|---|
+| `WGPU_BACKEND` | `dicomscope-tui`, `dicomscope-desktop` | Restricts wgpu backend selection (comma-separated: `metal`, `vulkan`, `dx12`, `gl`). |
+| `DICOMSCOPE_TAGS` | `dicomscope` CLI | When set (e.g. `DICOMSCOPE_TAGS=1`), forces tag dump to print all DICOM tags. |
+| `FHIRKIT_R4_EXAMPLES` | `crates/fhirkit` tests | Custom path to the uncompressed FHIR R4 examples directory (defaults to `tmp/fhir/examples/package`). |
+| `LOCAL_CI_PYENV` | `./local-ci.sh` | Path to a virtualenv containing `maturin` and `pytest` for local wheel verification (can also be configured in `.local-ci.env`). |
+| `PYO3_PYTHON` | Python binding builds | Path to the Python executable used by PyO3. |
+| `PYTHONHOME`, `DYLD_LIBRARY_PATH`, `LD_LIBRARY_PATH` | PyO3 binding tests | Configures Python standard library and shared library locations for embedded interpreter tests. |
+| `TERM`, `TERM_PROGRAM`, `TMUX` | `dicomscope-tui` | Used for terminal capability and graphics protocol autodetection. |
+
+---
+
+## Testing & Quality Assurance
 
 ```sh
-cargo test --workspace                                       # libraries and the viewer's domain code
-cargo clippy --workspace --all-targets -- -D warnings        # what CI runs
-cargo clippy -p dicomscope --target wasm32-unknown-unknown   # the browser build
+# Run all workspace unit and integration tests
+cargo test --workspace
+
+# Host clippy (must pass with 0 warnings)
+cargo clippy --workspace --all-targets -- -D warnings
+
+# WebAssembly clippy checks
+cargo clippy -p dicomscope --target wasm32-unknown-unknown -- -D warnings
+cargo clippy -p fhirkit --target wasm32-unknown-unknown -- -D warnings
+
+# FHIR R4 conformance tests (5,309 official round-trip examples)
+crates/fhirkit/fetch-fixtures.sh
+cargo test -p fhirkit --test r4_examples
+
+# Python wheels build & tests (with maturin & pytest installed)
+./local-ci.sh
 ```
 
-Toolchain: Rust 1.96 (MSRV 1.85 for the libraries), `wasm32-unknown-unknown`,
-Trunk 0.21; Xcode for the iPad.
+### No-Network Guarantee Audit
+CI and `local-ci.sh` enforce that no network APIs exist in the client-side viewer crates:
+```sh
+grep -rnE '(^|[^A-Za-z0-9_])(fetch\(|XMLHttpRequest|WebSocket|EventSource)' \
+  demo/dicomscope/src demo/dicomscope-core/src demo/dicomscope-desktop/src crates/hl7kit/src crates/mwlkit/src crates/fhirkit/src
+```
+
+---
+
+## Project Structure
+
+```text
+hl7v2/
+├── Cargo.toml                  # Workspace root configuration & build profiles
+├── local-ci.sh                 # Local CI runner script
+├── RELEASING.md                # Publishing and release instructions
+├── crates/
+│   ├── hl7kit/                 # Dependency-free HL7 v2 parser, builder & order extractor
+│   ├── hl7kit-py/              # PyO3 bindings for hl7kit (PyPI: hl7kit)
+│   ├── mwlkit/                 # HL7 order to DICOM Modality Worklist (IHE RAD-4)
+│   ├── mwlkit-py/              # PyO3 bindings for mwlkit (PyPI: mwlkit)
+│   ├── fhirkit/                # Zero-dependency FHIR R4 typed models & lossless JSON engine
+│   ├── fhirkit-py/             # PyO3 bindings for fhirkit (PyPI: fhirkit-rs)
+│   └── fhirkit-gen/            # FHIR R4 StructureDefinition code generator for fhirkit
+├── demo/
+│   ├── dicomscope-core/        # Shared core: DICOM scanner, WGSL renderer, linkage logic, FHIR
+│   ├── dicomscope/             # Browser-based viewer (Leptos + WebGPU) and CLI tool
+│   ├── dicomscope-desktop/     # Native desktop app (winit + egui + wgpu) & iOS iPad app (ios/)
+│   └── dicomscope-tui/         # Terminal viewer (Ratatui + wgpu) and scriptable CLI
+└── samples/                    # HL7 test messages, test scripts & DICOM corpus fetcher
+```
+
+---
 
 ## Releasing
 
-Every artefact leaves from its own tag, all through Trusted Publishing:
-`hl7kit-vX.Y.Z` and `mwlkit-vX.Y.Z` to crates.io (`publish.yml`),
-`hl7kit-py-vX.Y.Z` and `mwlkit-py-vX.Y.Z` to PyPI with attestations and a
-GitHub release (`python.yml`). The browser demo deploys from every push to
-`main`. See [RELEASING.md](RELEASING.md).
+Artefacts are released independently via GitHub Actions using Trusted Publishing (OIDC):
+- `hl7kit-vX.Y.Z`, `mwlkit-vX.Y.Z` and `fhirkit-vX.Y.Z` tags publish Rust crates to [crates.io](https://crates.io).
+- `hl7kit-py-vX.Y.Z`, `mwlkit-py-vX.Y.Z`, and `fhirkit-py-vX.Y.Z` tags build and publish multi-platform wheels to [PyPI](https://pypi.org) with provenance attestations and GitHub releases.
+- The web demo is continuously deployed to GitHub Pages from pushes to `main`.
 
-## Status
+See [RELEASING.md](RELEASING.md) for step-by-step instructions.
 
-hl7kit 0.2: parser, query API, order extraction with source and conflict
-reporting, builder. mwlkit 0.1: the RAD-4 mapping, UID and length
-policies, Part 10 output. dicomscope: browser and desktop feature-complete
-for viewing and linkage; the iPad build is functional and still
-desktop-shaped in places. Not covered: HL7 message-structure validation
-against segment tables, batch headers, MLLP and C-FIND (by design, see the
-crate READMEs).
+---
 
 ## License
 
-Licensed under either of [Apache License, Version 2.0](LICENSE-APACHE) or
-[MIT license](LICENSE-MIT) at your option. Unless you explicitly state
-otherwise, any contribution intentionally submitted for inclusion in the work
-by you shall be dual licensed as above, without any additional terms or
-conditions.
+Licensed under either of [Apache License, Version 2.0](LICENSE-APACHE) or [MIT license](LICENSE-MIT) at your option. Unless you explicitly state otherwise, any contribution intentionally submitted for inclusion in the work by you shall be dual licensed as above, without any additional terms or conditions.

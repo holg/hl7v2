@@ -1445,11 +1445,8 @@ dependencies = [
  "image",
  "pollster",
  "ratatui",
- "ratatui-image",
- "ratatui-wgpu",
+ "scopekit",
  "serde_json",
- "wgpu",
- "winit",
 ]
 
 [[package]]
@@ -1872,6 +1869,17 @@ name = "fearless_simd"
 version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b97b65636e5b9ef369943878ac74335ba1c55c1cb6adbf1e2c293c624248d693"
+
+[[package]]
+name = "fhirkit"
+version = "0.1.0"
+
+[[package]]
+name = "fhirkit-gen"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+]
 
 [[package]]
 name = "find-msvc-tools"
@@ -4767,6 +4775,23 @@ name = "scopeguard"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
+
+[[package]]
+name = "scopekit"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6f48427bb3e0e418cec266cd8ee33f9aa3319668f19c7ea8e2fb1172a42cdb69"
+dependencies = [
+ "arboard",
+ "crossterm",
+ "image",
+ "pollster",
+ "ratatui",
+ "ratatui-image",
+ "ratatui-wgpu",
+ "wgpu",
+ "winit",
+]
 
 [[package]]
 name = "sctk-adwaita"

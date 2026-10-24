@@ -150,15 +150,14 @@ pub enum Backend {
     Gl,
 }
 
-impl Backend {
-    /// The wgpu backend set this selects.
-    pub fn backends(self) -> wgpu::Backends {
-        match self {
-            Backend::Auto => wgpu::Backends::PRIMARY | wgpu::Backends::GL,
-            Backend::Metal => wgpu::Backends::METAL,
-            Backend::Vulkan => wgpu::Backends::VULKAN,
-            Backend::Dx12 => wgpu::Backends::DX12,
-            Backend::Gl => wgpu::Backends::GL,
+impl From<Backend> for scopekit::Backend {
+    fn from(b: Backend) -> Self {
+        match b {
+            Backend::Auto => scopekit::Backend::Auto,
+            Backend::Metal => scopekit::Backend::Metal,
+            Backend::Vulkan => scopekit::Backend::Vulkan,
+            Backend::Dx12 => scopekit::Backend::Dx12,
+            Backend::Gl => scopekit::Backend::Gl,
         }
     }
 }

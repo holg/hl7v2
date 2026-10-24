@@ -13,3 +13,10 @@
 /samples/*.dcm
 /samples/dvt_*.hl7
 /samples/opg_*.hl7
+# Python binding crates: build output and `maturin develop` extensions.
+/crates/*-py/target/
+/crates/*-py/dist/
+/crates/*-py/python/*/*.so
+/crates/*-py/python/*/*.pyd
+__pycache__/
+/.local-ci.env

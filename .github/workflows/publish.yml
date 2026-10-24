@@ -4,6 +4,7 @@ name: publish
 #
 #   git tag hl7kit-v0.3.0 && git push origin hl7kit-v0.3.0
 #   git tag mwlkit-v0.1.0 && git push origin mwlkit-v0.1.0
+#   git tag fhirkit-v0.1.0 && git push origin fhirkit-v0.1.0
 #
 # The version in the tag must equal the version in the crate's Cargo.toml.
 # A bare `v*` tag still means hl7kit, for the tags that already exist. The
@@ -16,12 +17,12 @@ name: publish
 #   2. A `CARGO_REGISTRY_TOKEN` repository secret, needed for the very first
 #      publish of a crate or when Trusted Publishing is not set up.
 #
-# `workflow_dispatch` tests and packages both crates without uploading, as a
+# `workflow_dispatch` tests and packages all three crates without uploading, as a
 # rehearsal.
 
 on:
   push:
-    tags: ["v*", "hl7kit-v*", "mwlkit-v*"]
+    tags: ["v*", "hl7kit-v*", "mwlkit-v*", "fhirkit-v*"]
   workflow_dispatch:
 
 permissions:
@@ -40,8 +41,9 @@ jobs:
           case "$GITHUB_REF_NAME" in
             hl7kit-v*) crate=hl7kit; tag_version="${GITHUB_REF_NAME#hl7kit-v}" ;;
             mwlkit-v*) crate=mwlkit; tag_version="${GITHUB_REF_NAME#mwlkit-v}" ;;
+            fhirkit-v*) crate=fhirkit; tag_version="${GITHUB_REF_NAME#fhirkit-v}" ;;
             v*)        crate=hl7kit; tag_version="${GITHUB_REF_NAME#v}" ;;
-            *)         crate="hl7kit mwlkit"; tag_version="" ;;
+            *)         crate="hl7kit mwlkit fhirkit"; tag_version="" ;;
           esac
           if [ "${{ github.event_name }}" = "push" ]; then
             version=$(cargo metadata --no-deps --format-version 1 \
@@ -80,4 +82,4 @@ jobs:
 
       - name: Rehearsal summary
         if: github.event_name == 'workflow_dispatch'
-        run: echo "packages built for $CRATES; push a hl7kit-v* or mwlkit-v* tag to publish"
+        run: echo "packages built for $CRATES; push a hl7kit-v*, mwlkit-v* or fhirkit-v* tag to publish"

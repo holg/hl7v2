@@ -27,24 +27,16 @@ dicomscope-core = { path = "../dicomscope-core" }
 hl7kit = { path = "../../crates/hl7kit" }
 serde_json = "1"
 clap = { version = "4.6", features = ["derive", "wrap_help"] }
-# Native backends only, as on the desktop.
-wgpu = { version = "30.0.1", default-features = false, features = ["std", "wgsl", "vulkan", "metal", "dx12", "gles"] }
 pollster = "0.4"
+# Terminal and window, kitty/iTerm2/sixel/half blocks, the wgpu view
+# (https://github.com/holg/scopekit).
+scopekit = "0.1"
 ratatui = { version = "0.30.1", default-features = false, features = ["crossterm"] }
 crossterm = "0.29"
-# Kitty, iTerm2 and sixel graphics, half blocks everywhere else.
-ratatui-image = { version = "11.1", default-features = false, features = ["crossterm"] }
 image = { version = "0.25.6", default-features = false, features = ["png"] }
-# Window mode: the same ratatui UI drawn by wgpu into a native window, the
-# image composited into it on the GPU at full resolution.
-ratatui-wgpu = { version = "0.6", default-features = false, features = ["ahash"] }
-winit = "0.30.13"
 
 [dev-dependencies]
 dicomscope-core = { path = "../dicomscope-core", features = ["test-support"] }
-
-# The bundled font, Cascadia Mono (SIL Open Font License 1.1, see
-# fonts/CascadiaOFL.txt), ships inside the binary for window mode.
 
 [package.metadata.docs.rs]
 all-features = false

@@ -7,8 +7,7 @@ use crate::cli::{
     DocsArgs, FhirArgs, FhirResource, GpuArgs, InfoArgs, LinkArgs, OrderArgs, RenderArgs,
     SliceArgs, TagsArgs, WorklistArgs,
 };
-use crate::gpu::{self, ImagePlugin, Look, WgpuPlugin};
-use crate::term;
+use crate::gpu::{self, Look, SliceView};
 use dicomscope_core::dicom::TagRow;
 use dicomscope_core::link::{Linkage, Pair};
 use dicomscope_core::session::{DocumentContent, Session};
@@ -273,25 +272,22 @@ pub fn render(a: &RenderArgs, g: GpuArgs) -> Outcome {
         size.0 as f32 / 2.0,
         size.1 as f32 / 2.0,
     );
-    let mut plugin = WgpuPlugin::new(g.backend).map_err(|e| e.to_string())?;
-    let look = Look { invert: a.invert };
-    let picture = plugin
-        .render(&mut s, size, look)
-        .map_err(|e| e.to_string())?;
+    // The viewer's GPU view, rendered once offscreen.
+    let mut view = SliceView::default();
+    view.update(&mut s, Look { invert: a.invert });
+    let gpu = scopekit::gpu::headless(g.backend.into())?;
+    let describe = gpu.describe();
+    let rgba = scopekit::gpu::Offscreen::new(gpu).render(&mut view, size.0, size.1)?;
     if let Some(path) = &a.output {
+        let picture = image::RgbaImage::from_raw(size.0, size.1, rgba.clone())
+            .ok_or("the rendered image has the wrong size")?;
         picture
             .save_with_format(path, image::ImageFormat::Png)
             .map_err(|e| format!("{}: {e}", path.display()))?;
-        eprintln!(
-            "{}: {}x{} via {}",
-            path.display(),
-            size.0,
-            size.1,
-            plugin.describe()
-        );
+        eprintln!("{}: {}x{} via {describe}", path.display(), size.0, size.1);
     }
     if a.inline {
-        term::print_inline(picture, a.protocol).map_err(|e| e.to_string())?;
+        scopekit::terminal::print_image(rgba, size.0, size.1, a.protocol.into())?;
     }
     Ok(0)
 }
@@ -641,8 +637,8 @@ pub fn gpu_list(g: GpuArgs) -> Outcome {
             a.driver_info
         );
     }
-    match WgpuPlugin::new(g.backend) {
-        Ok(p) => out!("\n--backend {:?} uses: {}", g.backend, p.describe()),
+    match scopekit::gpu::headless(g.backend.into()) {
+        Ok(gpu) => out!("\n--backend {:?} uses: {}", g.backend, gpu.describe()),
         Err(e) => out!("\n--backend {:?}: {e}", g.backend),
     }
     Ok(0)
