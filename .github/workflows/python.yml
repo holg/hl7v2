@@ -51,6 +51,9 @@ env:
   # abi3-py39: the wheels are built with a 3.9 interpreter so the ABI floor
   # is proven, then smoke-tested on the same 3.9.
   PYTHON_FLOOR: "3.9"
+  # The Linux wheel jobs name ubuntu-24.04, not ubuntu-latest: since
+  # 2026-10-19 ubuntu-latest is Ubuntu 26.04, for which actions/setup-python
+  # has no Python 3.9 build. Everything else can follow ubuntu-latest.
 
 jobs:
   # ---------------------------------------------------------------------
@@ -146,19 +149,19 @@ jobs:
       matrix:
         include:
           - id: manylinux_2_28-x86_64
-            os: ubuntu-latest
+            os: ubuntu-24.04
             target: x86_64
             manylinux: "2_28"
             interpreter: python3.9
             smoke: native
           - id: manylinux_2_28-aarch64
-            os: ubuntu-latest
+            os: ubuntu-24.04
             target: aarch64
             manylinux: "2_28"
             interpreter: python3.9
             smoke: none
           - id: musllinux_1_2-x86_64
-            os: ubuntu-latest
+            os: ubuntu-24.04
             target: x86_64
             manylinux: musllinux_1_2
             interpreter: python3.9
@@ -233,19 +236,19 @@ jobs:
       matrix:
         include:
           - id: manylinux_2_28-x86_64
-            os: ubuntu-latest
+            os: ubuntu-24.04
             target: x86_64
             manylinux: "2_28"
             interpreter: python3.9
             smoke: native
           - id: manylinux_2_28-aarch64
-            os: ubuntu-latest
+            os: ubuntu-24.04
             target: aarch64
             manylinux: "2_28"
             interpreter: python3.9
             smoke: none
           - id: musllinux_1_2-x86_64
-            os: ubuntu-latest
+            os: ubuntu-24.04
             target: x86_64
             manylinux: musllinux_1_2
             interpreter: python3.9
@@ -327,19 +330,19 @@ jobs:
       matrix:
         include:
           - id: manylinux_2_28-x86_64
-            os: ubuntu-latest
+            os: ubuntu-24.04
             target: x86_64
             manylinux: "2_28"
             interpreter: python3.9
             smoke: native
           - id: manylinux_2_28-aarch64
-            os: ubuntu-latest
+            os: ubuntu-24.04
             target: aarch64
             manylinux: "2_28"
             interpreter: python3.9
             smoke: none
           - id: musllinux_1_2-x86_64
-            os: ubuntu-latest
+            os: ubuntu-24.04
             target: x86_64
             manylinux: musllinux_1_2
             interpreter: python3.9
