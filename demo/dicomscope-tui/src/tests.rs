@@ -145,6 +145,15 @@ fn the_viewer_draws_every_panel_and_follows_keys() {
     };
     let picker = scopekit::terminal::picker(scopekit::Protocol::Halfblocks);
     let mut driver = scopekit::terminal::Driver::new(picker, view, &config);
+    // A runner without a GPU (CI) still draws the UI; only the image is
+    // missing, and the driver says so. Anything else is a failure.
+    let draw = |driver: &mut scopekit::terminal::Driver,
+                term: &mut ratatui::Terminal<TestBackend>,
+                app: &mut App| match driver.draw(term, app) {
+        Ok(()) => {}
+        Err(e) if e.starts_with("no GPU") => {}
+        Err(e) => panic!("{e}"),
+    };
     let mut term = ratatui::Terminal::new(TestBackend::new(120, 36)).unwrap();
     let key = |c: KeyCode| Event::Key(KeyEvent::new(c, KeyModifiers::NONE));
     let screen = |t: &ratatui::Terminal<TestBackend>| {
@@ -159,13 +168,15 @@ fn the_viewer_draws_every_panel_and_follows_keys() {
             .join("\n")
     };
 
-    driver.draw(&mut term, &mut app).unwrap();
+    draw(&mut driver, &mut term, &mut app);
     let s = screen(&term);
     assert!(s.contains("F1 Image") && s.contains("F7 Documents"), "{s}");
     assert!(s.contains("series 1/1"), "{s}");
     assert!(s.contains("ORM^O01"), "order summary in the sidebar:\n{s}");
-    if !app.describe.starts_with("no GPU") {
-        assert!(driver.error().is_none(), "{:?}", driver.error());
+    // The GPU comes up during the first frame, so only now does the driver
+    // know whether there is one. With it the image lands in the buffer as
+    // half blocks; without it the panels are still all there.
+    if driver.error().is_none() {
         assert!(
             s.contains('▀') || s.contains('▄'),
             "half blocks drawn:\n{s}"
@@ -175,7 +186,7 @@ fn the_viewer_draws_every_panel_and_follows_keys() {
     let before = app.session.view.scale;
     for c in ['-', 'r', 'w', 'i', 'e'] {
         app.handle(key(KeyCode::Char(c)));
-        driver.draw(&mut term, &mut app).unwrap();
+        draw(&mut driver, &mut term, &mut app);
     }
     // Zoom out: the 3x2 test image already sits at the maximum scale.
     assert!(app.session.view.scale < before);
@@ -185,16 +196,16 @@ fn the_viewer_draws_every_panel_and_follows_keys() {
     for tab in Tab::ALL.iter().skip(1) {
         app.handle(key(KeyCode::Tab));
         assert_eq!(app.tab, *tab);
-        driver.draw(&mut term, &mut app).unwrap();
+        draw(&mut driver, &mut term, &mut app);
         let s = screen(&term);
         assert!(s.contains(tab.title()), "{:?} panel:\n{s}", tab);
     }
     // FHIR: the Bundle, then the next resource.
     app.handle(key(KeyCode::F(6)));
-    driver.draw(&mut term, &mut app).unwrap();
+    draw(&mut driver, &mut term, &mut app);
     assert!(screen(&term).contains("\"resourceType\""));
     app.handle(key(KeyCode::Right));
-    driver.draw(&mut term, &mut app).unwrap();
+    draw(&mut driver, &mut term, &mut app);
     assert!(screen(&term).contains("◀ Patient ▶"));
 
     // Tags: filter by typing.
@@ -208,12 +219,12 @@ fn the_viewer_draws_every_panel_and_follows_keys() {
         }
     }
     app.handle(key(KeyCode::Enter));
-    driver.draw(&mut term, &mut app).unwrap();
+    draw(&mut driver, &mut term, &mut app);
     let s = screen(&term);
     assert!(s.contains("/rows") && s.contains("Rows"), "{s}");
 
     app.handle(key(KeyCode::Char('?')));
-    driver.draw(&mut term, &mut app).unwrap();
+    draw(&mut driver, &mut term, &mut app);
     assert!(screen(&term).contains("Keys"));
     app.handle(key(KeyCode::Char('x')));
     assert!(!app.help);

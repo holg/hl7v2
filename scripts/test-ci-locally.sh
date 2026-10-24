@@ -1,8 +1,8 @@
 #!/bin/sh
 # Run what .github/workflows/ci.yml runs, locally, in the same order.
 #
-#   ./local-ci.sh           format, clippy (host + wasm), fetch, tests
-#   ./local-ci.sh --full    ... and the trunk release build of the demo
+#   scripts/test-ci-locally.sh           format, clippy (host + wasm), fetch, tests
+#   scripts/test-ci-locally.sh --full    ... and the trunk release build of the demo
 #
 # Then the Python wheels, as .github/workflows/python.yml builds them, when
 # a Python environment with maturin and pytest is configured: set
@@ -13,7 +13,7 @@
 # Test fixtures (FHIR packages, the SQL-on-FHIR suite) are fetched into
 # tmp/fhir/ first; the SQL-on-FHIR suite is fetched fresh every run.
 set -eu
-cd "$(dirname "$0")"
+cd "$(dirname "$0")/.."
 full=0
 [ "${1:-}" = "--full" ] && full=1
 
@@ -34,6 +34,14 @@ crates/fhirkit/fetch-fixtures.sh
 
 step "Test (host)"
 cargo test --workspace
+
+# GitHub's runners have no graphics adapter. Asking wgpu for a backend this
+# machine does not have reproduces that: the GPU tests must skip or degrade,
+# never fail. (dx12 is only compiled in on Windows; there, metal is absent.)
+step "Test (host, no GPU adapter, as on the CI runner)"
+nogpu=dx12
+case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*|Windows_NT) nogpu=metal ;; esac
+WGPU_BACKEND=$nogpu cargo test -p dicomscope-core -p dicomscope-tui -p dicomscope-desktop
 
 step "No network APIs in the demo"
 if grep -rnE '(^|[^A-Za-z0-9_])(fetch\(|XMLHttpRequest|WebSocket|EventSource)' demo/dicomscope/src demo/dicomscope-core/src demo/dicomscope-desktop/src crates/hl7kit/src crates/mwlkit/src crates/fhirkit/src; then

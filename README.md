@@ -235,8 +235,8 @@ json_str = patient.to_json(pretty=True)
 
 | Script | Description |
 |---|---|
-| `./local-ci.sh` | Local CI runner matching GitHub Actions: runs `cargo fmt`, clippy (host + wasm32), fetches fixtures, tests workspace, verifies no network APIs in demo, and builds/tests Python wheels if environment is set. |
-| `./local-ci.sh --full` | Same as `./local-ci.sh`, plus compiles the release WebAssembly bundle with Trunk. |
+| `scripts/test-ci-locally.sh` | Local CI runner matching GitHub Actions: runs `cargo fmt`, clippy (host + wasm32), fetches fixtures, tests workspace, verifies no network APIs in demo, and builds/tests Python wheels if environment is set. |
+| `scripts/test-ci-locally.sh --full` | Same as `scripts/test-ci-locally.sh`, plus compiles the release WebAssembly bundle with Trunk. |
 | `crates/fhirkit/fetch-fixtures.sh` | Fetches the official FHIR R4 core package (`hl7.fhir.r4.core`), R4 examples package (`hl7.fhir.r4.examples`), and SQL-on-FHIR test suite into `tmp/fhir/`. |
 | `samples/fetch-dicom.sh` | Downloads test DICOM files from pydicom test corpus into `samples/dicom/` (synthetic, no real patient data). |
 
@@ -249,7 +249,7 @@ json_str = patient.to_json(pretty=True)
 | `WGPU_BACKEND` | `dicomscope-tui`, `dicomscope-desktop` | Restricts wgpu backend selection (comma-separated: `metal`, `vulkan`, `dx12`, `gl`). |
 | `DICOMSCOPE_TAGS` | `dicomscope` CLI | When set (e.g. `DICOMSCOPE_TAGS=1`), forces tag dump to print all DICOM tags. |
 | `FHIRKIT_R4_EXAMPLES` | `crates/fhirkit` tests | Custom path to the uncompressed FHIR R4 examples directory (defaults to `tmp/fhir/examples/package`). |
-| `LOCAL_CI_PYENV` | `./local-ci.sh` | Path to a virtualenv containing `maturin` and `pytest` for local wheel verification (can also be configured in `.local-ci.env`). |
+| `LOCAL_CI_PYENV` | `scripts/test-ci-locally.sh` | Path to a virtualenv containing `maturin` and `pytest` for local wheel verification (can also be configured in `.local-ci.env`). |
 | `PYO3_PYTHON` | Python binding builds | Path to the Python executable used by PyO3. |
 | `PYTHONHOME`, `DYLD_LIBRARY_PATH`, `LD_LIBRARY_PATH` | PyO3 binding tests | Configures Python standard library and shared library locations for embedded interpreter tests. |
 | `TERM`, `TERM_PROGRAM`, `TMUX` | `dicomscope-tui` | Used for terminal capability and graphics protocol autodetection. |
@@ -274,11 +274,11 @@ crates/fhirkit/fetch-fixtures.sh
 cargo test -p fhirkit --test r4_examples
 
 # Python wheels build & tests (with maturin & pytest installed)
-./local-ci.sh
+scripts/test-ci-locally.sh
 ```
 
 ### No-Network Guarantee Audit
-CI and `local-ci.sh` enforce that no network APIs exist in the client-side viewer crates:
+CI and `scripts/test-ci-locally.sh` enforce that no network APIs exist in the client-side viewer crates:
 ```sh
 grep -rnE '(^|[^A-Za-z0-9_])(fetch\(|XMLHttpRequest|WebSocket|EventSource)' \
   demo/dicomscope/src demo/dicomscope-core/src demo/dicomscope-desktop/src crates/hl7kit/src crates/mwlkit/src crates/fhirkit/src
@@ -291,7 +291,7 @@ grep -rnE '(^|[^A-Za-z0-9_])(fetch\(|XMLHttpRequest|WebSocket|EventSource)' \
 ```text
 hl7v2/
 ├── Cargo.toml                  # Workspace root configuration & build profiles
-├── local-ci.sh                 # Local CI runner script
+├── scripts/test-ci-locally.sh  # Local CI runner script
 ├── RELEASING.md                # Publishing and release instructions
 ├── crates/
 │   ├── hl7kit/                 # Dependency-free HL7 v2 parser, builder & order extractor

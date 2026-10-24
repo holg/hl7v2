@@ -131,7 +131,7 @@ Milestones:
      (MIT; 144 tests, 133 shareable and 11 experimental), run by a Rust
      test that writes `test_report.json`. The suite changes often, so it
      is not vendored: `fetch-fixtures.sh` fetches it fresh from `main` in
-     every CI run and every `local-ci.sh` run, into
+     every CI run and every `scripts/test-ci-locally.sh` run, into
      `tmp/fhir/sql-on-fhir/`, and records the commit. Target 133/133, then 144/144,
      then registration on sql-on-fhir.org's implementations page.
 4. **Output.**
